@@ -1012,7 +1012,7 @@ def solve_ransac_icp_2d(
     
     return best_R, best_t, final_error
 
-def transform_pose(pose: Pose, transform_matrix: np.ndarray):
+def transform_pose(pose, transform_matrix: np.ndarray):
     """
     Apply a 4x4 homogeneous transformation to a ROS geometry_msgs/Pose.
 

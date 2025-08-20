@@ -18,19 +18,7 @@ from osm_align.kitti_utils import angle_dict, cordinta_dict
 import argparse
 import sys
 
-# Configuration parameters
-pose_history_size_: int = 50
-knn_neighbors_: int = 10
-valid_correspondence_threshold_: float = 0.6
-icp_error_threshold_: float = 1.5
-min_sample_size: int = 10
-min_distance_threshold_: float = 20.0
-
-odom_topic_: str = '/liodom/odom'
-# odom_topic_: str = '/kitti/gtruth/odom'
-# Configurable service name for transform correction
-# This service receives transform corrections and updates the laser odometry offset
-transform_correction_service_: str = '/liodom/transform_correction'
+# Configuration parameters are now declared as ROS parameters in the node
 
 
 class OdomCorrection(Node):
@@ -78,20 +66,63 @@ class OdomCorrection(Node):
 
     def __init__(
         self, 
-        map_lanelet_path: str, 
-        origin_coords_lanelet: List[float], 
-        angle_lanelet_correction: float, 
-        frame_id: str = "00"
+        map_lanelet_path: str = None
     ) -> None:
-        super().__init__('odom_subscriber')
+        super().__init__('osm_align_node')
         self.frame_count: int = 0
-        self.frame_id: str = frame_id
+        # Declare ROS parameters with default values
+        self.declare_parameter('frame_id', '00')
+        self.declare_parameter('map_lanelet_path', '')
+        self.declare_parameter('pose_history_size', 50)
+        self.declare_parameter('knn_neighbors', 10)
+        self.declare_parameter('valid_correspondence_threshold', 0.6)
+        self.declare_parameter('icp_error_threshold', 1.5)
+        self.declare_parameter('min_sample_size', 10)
+        self.declare_parameter('min_distance_threshold', 10.0)
+        self.declare_parameter('odom_topic', '/liodom/odom')
+        self.declare_parameter('transform_correction_service', '/liodom/transform_correction')
         
-        # Store parameters
-        self.map_lanelet_path: str = map_lanelet_path
-        self.origin_coords_lanelet: List[float] = origin_coords_lanelet
-        self.angle_lanelet_correction: float = angle_lanelet_correction
+
         
+        # Get parameters
+        self.frame_id: str = self.get_parameter('frame_id').get_parameter_value().string_value
+        map_lanelet_path_param: str = self.get_parameter('map_lanelet_path').get_parameter_value().string_value
+        self.pose_history_size: int = self.get_parameter('pose_history_size').get_parameter_value().integer_value
+        self.knn_neighbors: int = self.get_parameter('knn_neighbors').get_parameter_value().integer_value
+        self.valid_correspondence_threshold: float = self.get_parameter('valid_correspondence_threshold').get_parameter_value().double_value
+        self.icp_error_threshold: float = self.get_parameter('icp_error_threshold').get_parameter_value().double_value
+        self.min_sample_size: int = self.get_parameter('min_sample_size').get_parameter_value().integer_value
+        self.min_distance_threshold: float = self.get_parameter('min_distance_threshold').get_parameter_value().double_value
+        self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
+        self.transform_correction_service: str = self.get_parameter('transform_correction_service').get_parameter_value().string_value
+
+
+        # Build map parameters from frame_id if not provided directly
+        if map_lanelet_path is not None:
+            self.map_lanelet_path: str = map_lanelet_path
+        elif map_lanelet_path_param and map_lanelet_path_param.strip():
+            self.map_lanelet_path: str = map_lanelet_path_param
+        else:
+            # Auto-construct path from frame_id
+            self.map_lanelet_path: str = f'/home/joaquinecc/Documents/dataset/kitti/dataset/map/{self.frame_id}/lanelet2_seq_{self.frame_id}.osm'
+            
+        # Always use frame_id to get origin coordinates and angle correction from dictionaries
+        self.origin_coords_lanelet: List[float] = [cordinta_dict[self.frame_id]['origin_lat'], cordinta_dict[self.frame_id]['origin_lon']]
+        self.angle_lanelet_correction: float = angle_dict[self.frame_id]
+                # Print all parameters for debugging/logging
+        self.get_logger().info(
+            f"Parameters:\n"
+            f"  frame_id: {self.frame_id}\n"
+            f"  map_lanelet_path: {map_lanelet_path_param}\n"
+            f"  pose_history_size: {self.pose_history_size}\n"
+            f"  knn_neighbors: {self.knn_neighbors}\n"
+            f"  valid_correspondence_threshold: {self.valid_correspondence_threshold}\n"
+            f"  icp_error_threshold: {self.icp_error_threshold}\n"
+            f"  min_sample_size: {self.min_sample_size}\n"
+            f"  min_distance_threshold: {self.min_distance_threshold}\n"
+            f"  odom_topic: {self.odom_topic}\n"
+            f"  transform_correction_service: {self.transform_correction_service}"
+        )
         # Initialize lanelet-related variables
         self.projector: Optional[lanelet2.projection.UtmProjector] = None
         self.lanelet_map: Optional[lanelet2.core.LaneletMap] = None
@@ -108,7 +139,7 @@ class OdomCorrection(Node):
         # Create subscription
         self.subscription = self.create_subscription(   
             Odometry,
-            odom_topic_,  # Change if your odometry topic has a different name
+            self.odom_topic,
             self.odom_callback,
             10
         )
@@ -117,7 +148,7 @@ class OdomCorrection(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
 
         # Create service client
-        self.client = self.create_client(TransformCorrection, transform_correction_service_)       
+        self.client = self.create_client(TransformCorrection, self.transform_correction_service)       
         
         # Wait for service to be available
         while not self.client.wait_for_service(timeout_sec=1.0):
@@ -293,31 +324,31 @@ class OdomCorrection(Node):
         trajectory_points = [[pose.position.x, pose.position.y] for pose in self.pose_history]
         total_distance = np.sum(np.linalg.norm(np.diff(trajectory_points, axis=0), axis=1))
         
-        if total_distance < 10:
-            self.get_logger().info(f"frame {self.frame_count} total_distance: {total_distance} < 10, skip ICP")
+        if total_distance < self.min_distance_threshold:
+            self.get_logger().info(f"frame {self.frame_count} total_distance: {total_distance} < {self.min_distance_threshold}, skip ICP")
             return
             
         trajectory_points = np.array(trajectory_points)
-        knn_index = self.lane_kdtree.query(trajectory_points, k=knn_neighbors_)[1]
+        knn_index = self.lane_kdtree.query(trajectory_points, k=self.knn_neighbors)[1]
         best_lane_points = utils.find_interception_normal_shooting_nextpoint_tangent(
             trajectory_points, knn_index, self.lane_points, self.lane_points_next
         )
         valid_mask = ~np.isnan(best_lane_points).any(axis=1)
 
-        if valid_mask.sum() < len(self.pose_history) * valid_correspondence_threshold_:
+        if valid_mask.sum() < len(self.pose_history) * self.valid_correspondence_threshold:
             self.get_logger().info(f"frame {self.frame_count} ({valid_mask.sum()}) Not enough valid correspondences for ICP alignment")
             return
 
-        inlier_ratio_threshold = min_sample_size / pose_history_size_   
+        inlier_ratio_threshold = self.min_sample_size / self.pose_history_size   
         R_total, T_total, final_error = utils.solve_ransac_icp_2d(
             trajectory_points[valid_mask], 
             best_lane_points[valid_mask],
-            distance_threshold=icp_error_threshold_,
-            min_sample_size=min_sample_size,
+            distance_threshold=self.icp_error_threshold,
+            min_sample_size=self.min_sample_size,
             inlier_ratio_threshold=inlier_ratio_threshold
         )
 
-        if final_error < icp_error_threshold_:
+        if final_error < self.icp_error_threshold:
             self.get_logger().info(f"frame {self.frame_count} Pass threshold, ICP final error: {final_error}")
 
             pose_history = []
@@ -373,7 +404,7 @@ class OdomCorrection(Node):
 
         self.pose_history.append(transformed_pose)
         
-        if len(self.pose_history) == pose_history_size_:
+        if len(self.pose_history) == self.pose_history_size:
             self.align_pose()
             self.pose_history.pop(0)
         self.frame_count += 1
@@ -459,11 +490,11 @@ class OdomCorrection(Node):
 
 def main(args: Optional[List[str]] = None) -> None:
     """
-    Initialize and run the OSM alignment node with configurable parameters.
+    Initialize and run the OSM alignment node with ROS2 parameters.
 
-    Parses command line arguments to configure the node for different KITTI
-    sequences, validates the frame_id against available configurations,
-    and starts the ROS2 node for real-time odometry correction.
+    This function initializes ROS2, creates the OdomCorrection node, and spins
+    it to process incoming messages. All configuration parameters are now
+    handled through ROS2 parameters via the launch file or command line.
 
     Parameters
     ----------
@@ -472,61 +503,41 @@ def main(args: Optional[List[str]] = None) -> None:
 
     Examples
     --------
-    >>> # Run with default frame_id='00'
-    >>> main()
+    >>> # Run with launch file (recommended)
+    >>> # ros2 launch osm_align osm_align.launch.py frame_id:=02
     
-    >>> # Run with specific frame_id
-    >>> main(['--frame_id', '02'])
-
-    Command Line Arguments
-    ----------------------
-    --frame_id : str, default='00'
-        KITTI sequence identifier (e.g., '00', '01', '02', ..., '10').
-        Must exist in angle_dict and cordinta_dict configuration.
-
-    Raises
-    ------
-    SystemExit
-        If the specified frame_id is not found in the configuration dictionaries.
+    >>> # Run directly with ROS2 parameter syntax
+    >>> # ros2 run osm_align kitti_odometry --ros-args -p frame_id:=02
 
     Notes
     -----
-    The function automatically constructs file paths and configuration parameters
-    based on the frame_id, making it easy to switch between different KITTI
-    sequences without modifying the source code.
+    Configuration parameters are now handled through ROS2 parameters:
+    - Use the launch file for easy configuration with defaults
+    - Parameters include frame_id, pose_history_size, ICP thresholds, etc.
+    - The node automatically constructs map paths and configurations from frame_id
     """
     rclpy.init(args=args)
     
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='OSM Alignment Node')
-    parser.add_argument('--frame_id', type=str, default='00', 
-                       help='Frame ID for KITTI sequence (e.g., 00, 01, 02, etc.)')
+    # Create node - parameters will be read from ROS parameter system
+    node = OdomCorrection()
     
-    # Parse known args to handle ROS2 arguments
-    parsed_args, unknown = parser.parse_known_args(args)
-    frame_id = parsed_args.frame_id
+    # Log the configuration being used
+    node.get_logger().info(f"Starting OSM Alignment with frame_id: {node.frame_id}")
+    node.get_logger().info(f"Map path: {node.map_lanelet_path}")
+    node.get_logger().info(f"Origin coordinates: {node.origin_coords_lanelet}")
+    node.get_logger().info(f"Angle correction: {node.angle_lanelet_correction}")
+    node.get_logger().info(f"Pose history size: {node.pose_history_size}")
+    node.get_logger().info(f"ICP error threshold: {node.icp_error_threshold}")
+    node.get_logger().info(f"Odometry topic: {node.odom_topic}")
+    node.get_logger().info(f"Transform service: {node.transform_correction_service}")
     
-    # Validate frame_id exists in dictionaries
-    if frame_id not in angle_dict or frame_id not in cordinta_dict:
-        print(f"Error: Frame ID '{frame_id}' not found in configuration dictionaries")
-        print(f"Available frame IDs: {list(angle_dict.keys())}")
-        return
-    
-    # Build parameters using frame_id
-    map_lanelet_path = f'/home/joaquinecc/Documents/dataset/kitti/dataset/map/{frame_id}/lanelet2_seq_{frame_id}.osm'
-    origin_coords_lanelet = [cordinta_dict[frame_id]['origin_lat'], cordinta_dict[frame_id]['origin_lon']]
-    angle_lanelet_correction = angle_dict[frame_id]
-    
-    print(f"Starting OSM Alignment with frame_id: {frame_id}")
-    print(f"Map path: {map_lanelet_path}")
-    print(f"Origin coordinates: {origin_coords_lanelet}")
-    print(f"Angle correction: {angle_lanelet_correction}")
-    
-    node = OdomCorrection(map_lanelet_path, origin_coords_lanelet, angle_lanelet_correction, frame_id)
-    
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        node.get_logger().info("Node interrupted by user")
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':
