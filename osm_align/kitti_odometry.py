@@ -215,7 +215,7 @@ class OdomCorrection(Node):
         ])
         lane_points = []
         prev_point = None
-        min_dist = 1.0
+        min_dist = 3.0
         lane_points_next = []
         
         for lanelet in self.lanelet_map.laneletLayer:
@@ -339,15 +339,12 @@ class OdomCorrection(Node):
             self.get_logger().info(f"frame {self.frame_count} ({valid_mask.sum()}) Not enough valid correspondences for ICP alignment")
             return
 
-        inlier_ratio_threshold = self.min_sample_size / self.pose_history_size   
-        R_total, T_total, final_error = utils.solve_ransac_icp_2d(
+     
+        R_total, T_total, final_error = utils.solve_trimmed_icp_2d(
             trajectory_points[valid_mask], 
-            best_lane_points[valid_mask],
-            distance_threshold=self.icp_error_threshold,
-            min_sample_size=self.min_sample_size,
-            inlier_ratio_threshold=inlier_ratio_threshold
+            best_lane_points[valid_mask], 
+            trimming_ratio=0.2,
         )
-
         if final_error < self.icp_error_threshold:
             self.get_logger().info(f"frame {self.frame_count} Pass threshold, ICP final error: {final_error}")
 
@@ -371,7 +368,7 @@ class OdomCorrection(Node):
             T_3d[:2] = T_total
             
             self._send_transform_correction(R_3d, T_3d)
-            self.get_logger().info(f"frame {self.frame_count} T_total: {T_total}, R_total: {R_total}")
+            self.get_logger().debug(f"frame {self.frame_count} T_total: {T_total}, R_total: {R_total}")
         else:
             self.get_logger().info(f"frame {self.frame_count} Fail threshold, ICP final error: {final_error}")
         

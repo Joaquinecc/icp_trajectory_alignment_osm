@@ -216,7 +216,7 @@ def find_interception_normal_shooting_nextpoint_tangent(
                         best_parallel = parallel_score
                         proj = a + t * ab
                         best_intercept_point = proj
-                        if parallel_score>=0.9: #no need to check more, choose closest 
+                        if parallel_score>=0.95: #no need to check more, choose closest 
                             break
 
         intercept_points[i] = best_intercept_point
@@ -866,9 +866,9 @@ def solve_ransac_icp_2d(
     source_points: np.ndarray, 
     target_points: np.ndarray, 
     min_sample_size: int = 5, 
-    max_iterations: int = 10000, 
+    max_iterations: int = 100, 
     distance_threshold: float = 2.0, 
-    inlier_ratio_threshold: float = 0.4, 
+    inlier_ratio_threshold: float = 0.1, 
     max_icp_iterations: int = 5, 
     tolerance: float = 1e-6
 ) -> Tuple[np.ndarray, np.ndarray, float]:
@@ -949,12 +949,11 @@ def solve_ransac_icp_2d(
     best_t = np.zeros(2)
     best_inliers = []
     best_error = np.inf
-    
-    for iteration in range(max_iterations):
+    weights = np.linspace(0.1, 1.0, N)
+    weights=weights/weights.sum()
+    for _ in range(max_iterations):
         # Randomly sample points
         # Sample indices with higher probability for indices closer to N (favoring recent points)
-        weights = np.linspace(0.1, 1.0, N)
-        weights /= weights.sum()
         sample_indices = np.random.choice(N, min_sample_size, replace=False, p=weights)
         sample_source = source_points[sample_indices]
         sample_target = target_points[sample_indices]
@@ -1001,12 +1000,12 @@ def solve_ransac_icp_2d(
             
         
           
-    # If no good model found, fall back to standard ICP
-    if best_inlier_count == 0:
-        # print("Warning: RANSAC failed to find good model, falling back to standard ICP")
-        best_R, best_t, final_error =  solve_trimmed_icp_2d(source_points, target_points, max_iterations=max_icp_iterations, tolerance=tolerance)
+    # # If no good model found, fall back to standard ICP
+    # if best_inlier_count == 0:
+    #     # print("Warning: RANSAC failed to find good model, falling back to standard ICP")
+    #     best_R, best_t, final_error =  solve_trimmed_icp_2d(source_points, target_points, max_iterations=max_icp_iterations, tolerance=tolerance)
     
-    # # Calculate final error using best inliers
+    # # # Calculate final error using best inliers
     final_transformed_source = (best_R @ source_points.T).T + best_t
     final_error = np.mean(np.linalg.norm(final_transformed_source[best_inliers] - target_points[best_inliers], axis=1))
     

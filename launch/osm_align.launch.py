@@ -46,19 +46,19 @@ def generate_launch_description():
     
     declare_pose_history_size = DeclareLaunchArgument(
         'pose_history_size', 
-        default_value='50',
+        default_value='100',
         description='Number of poses to maintain in sliding window buffer'
     )
     
     declare_knn_neighbors = DeclareLaunchArgument(
         'knn_neighbors',
-        default_value='100', 
+        default_value='15', 
         description='Number of nearest neighbors for KD-tree spatial queries'
     )
     
     declare_valid_correspondence_threshold = DeclareLaunchArgument(
         'valid_correspondence_threshold',
-        default_value='0.6',
+        default_value='0.8',
         description='Minimum ratio of valid trajectory-to-map correspondences'
     )
     
@@ -76,7 +76,7 @@ def generate_launch_description():
     
     declare_min_distance_threshold = DeclareLaunchArgument(
         'min_distance_threshold', 
-        default_value='20.0',
+        default_value='10.0',
         description='Minimum total trajectory distance before triggering alignment'
     )
     
