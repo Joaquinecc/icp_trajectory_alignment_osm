@@ -77,7 +77,7 @@ class OdomCorrection(Node):
         self.declare_parameter('knn_neighbors', 10)
         self.declare_parameter('valid_correspondence_threshold', 0.6)
         self.declare_parameter('icp_error_threshold', 1.5)
-        self.declare_parameter('min_sample_size', 10)
+        self.declare_parameter('trimming_ratio', 0.2)
         self.declare_parameter('min_distance_threshold', 10.0)
         self.declare_parameter('odom_topic', '/liodom/odom')
         self.declare_parameter('transform_correction_service', '/liodom/transform_correction')
@@ -91,7 +91,7 @@ class OdomCorrection(Node):
         self.knn_neighbors: int = self.get_parameter('knn_neighbors').get_parameter_value().integer_value
         self.valid_correspondence_threshold: float = self.get_parameter('valid_correspondence_threshold').get_parameter_value().double_value
         self.icp_error_threshold: float = self.get_parameter('icp_error_threshold').get_parameter_value().double_value
-        self.min_sample_size: int = self.get_parameter('min_sample_size').get_parameter_value().integer_value
+        self.trimming_ratio: float = self.get_parameter('trimming_ratio').get_parameter_value().double_value
         self.min_distance_threshold: float = self.get_parameter('min_distance_threshold').get_parameter_value().double_value
         self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.transform_correction_service: str = self.get_parameter('transform_correction_service').get_parameter_value().string_value
@@ -118,7 +118,7 @@ class OdomCorrection(Node):
             f"  knn_neighbors: {self.knn_neighbors}\n"
             f"  valid_correspondence_threshold: {self.valid_correspondence_threshold}\n"
             f"  icp_error_threshold: {self.icp_error_threshold}\n"
-            f"  min_sample_size: {self.min_sample_size}\n"
+            f"  trimming_ratio: {self.trimming_ratio}\n"
             f"  min_distance_threshold: {self.min_distance_threshold}\n"
             f"  odom_topic: {self.odom_topic}\n"
             f"  transform_correction_service: {self.transform_correction_service}"
@@ -343,7 +343,7 @@ class OdomCorrection(Node):
         R_total, T_total, final_error = utils.solve_trimmed_icp_2d(
             trajectory_points[valid_mask], 
             best_lane_points[valid_mask], 
-            trimming_ratio=0.2,
+            trimming_ratio=self.trimming_ratio,
         )
         if final_error < self.icp_error_threshold:
             self.get_logger().info(f"frame {self.frame_count} Pass threshold, ICP final error: {final_error}")

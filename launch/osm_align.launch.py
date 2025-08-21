@@ -22,7 +22,7 @@ def generate_launch_description():
     - knn_neighbors: Number of nearest neighbors for KD-tree queries (default: 10) 
     - valid_correspondence_threshold: Minimum ratio of valid correspondences (default: 0.6)
     - icp_error_threshold: Maximum ICP error for successful alignment (default: 1.5)
-    - min_sample_size: Minimum samples for RANSAC-ICP (default: 10)
+    - trimming_ratio: Trimming ratio for robust ICP (default: 0.2)
     - min_distance_threshold: Minimum trajectory distance for alignment (default: 10.0)
     - odom_topic: Input odometry topic name (default: '/liodom/odom')
     - transform_correction_service: Transform correction service name (default: '/liodom/transform_correction')
@@ -68,10 +68,10 @@ def generate_launch_description():
         description='Maximum acceptable ICP alignment error threshold'
     )
     
-    declare_min_sample_size = DeclareLaunchArgument(
-        'min_sample_size',
-        default_value='10',
-        description='Minimum number of samples required for RANSAC-ICP'
+    declare_trimming_ratio = DeclareLaunchArgument(
+        'trimming_ratio',
+        default_value='0.2',
+        description='Trimming ratio for robust ICP algorithm'
     )
     
     declare_min_distance_threshold = DeclareLaunchArgument(
@@ -106,7 +106,7 @@ def generate_launch_description():
             'knn_neighbors': LaunchConfiguration('knn_neighbors'), 
             'valid_correspondence_threshold': LaunchConfiguration('valid_correspondence_threshold'),
             'icp_error_threshold': LaunchConfiguration('icp_error_threshold'),
-            'min_sample_size': LaunchConfiguration('min_sample_size'),
+            'trimming_ratio': LaunchConfiguration('trimming_ratio'),
             'min_distance_threshold': LaunchConfiguration('min_distance_threshold'),
             'odom_topic': LaunchConfiguration('odom_topic'),
             'transform_correction_service': LaunchConfiguration('transform_correction_service')
@@ -124,7 +124,7 @@ def generate_launch_description():
         declare_knn_neighbors,
         declare_valid_correspondence_threshold,
         declare_icp_error_threshold,
-        declare_min_sample_size,
+        declare_trimming_ratio,
         declare_min_distance_threshold,
         declare_odom_topic,
         declare_transform_correction_service,
