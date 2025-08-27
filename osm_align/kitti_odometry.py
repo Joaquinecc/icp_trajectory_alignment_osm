@@ -17,6 +17,7 @@ import osm_align.utils as utils
 from osm_align.kitti_utils import angle_dict, cordinta_dict
 import argparse
 import sys
+from scipy.linalg import inv
 
 # Configuration parameters are now declared as ROS parameters in the node
 
@@ -131,7 +132,7 @@ class OdomCorrection(Node):
         self.lane_points: Optional[np.ndarray] = None
         self.lane_points_next: Optional[np.ndarray] = None
         self.pose_history: List[Pose] = []
-        
+        self.delta_t_acc=np.eye(4)
         # Load lanelet map and build KD-tree
         self._load_lanelet_map()
         self._build_lane_kdtree()
@@ -143,23 +144,25 @@ class OdomCorrection(Node):
             self.odom_callback,
             10
         )
+        self.publisher_odom=self.create_publisher(Odometry, '/osm_align/odom_aligned', 10)
         
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
 
         # Create service client
-        self.client = self.create_client(TransformCorrection, self.transform_correction_service)       
+        # self.client = self.create_client(TransformCorrection, self.transform_correction_service)       
         
         # Wait for service to be available
-        while not self.client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Service not available, waiting...')
+        # while not self.client.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info('Service not available, waiting...')
 
         self.base_to_velo, _ = self.get_transform_matrix_from_tf(
             source_frame="base_link", 
             target_frame="velo_link", 
             timeout_sec=5
         )
-        self.get_logger().info(f"Base to Velodyne transform matrix (from rclpy):\n{self.base_to_velo}")
+
+        self.get_logger().debug(f"Base to Velodyne transform matrix (from rclpy):\n{self.base_to_velo}")
 
     def _load_lanelet_map(self) -> None:
         """
@@ -214,11 +217,11 @@ class OdomCorrection(Node):
             [np.sin(rotation_angle), np.cos(rotation_angle)]
         ])
         lane_points = []
-        prev_point = None
         min_dist = 3.0
         lane_points_next = []
         
         for lanelet in self.lanelet_map.laneletLayer:
+            prev_point = None
             centerline = lanelet.centerline
             aux_points = []
             for i, point in enumerate(centerline):
@@ -321,14 +324,13 @@ class OdomCorrection(Node):
         The transformation is applied in-place to the pose history and also sent
         as a service request to the laser odometry system for real-time correction.
         """
-        trajectory_points = [[pose.position.x, pose.position.y] for pose in self.pose_history]
+        trajectory_points = np.array([[pose.position.x, pose.position.y] for pose in self.pose_history])
         total_distance = np.sum(np.linalg.norm(np.diff(trajectory_points, axis=0), axis=1))
         
         if total_distance < self.min_distance_threshold:
             self.get_logger().info(f"frame {self.frame_count} total_distance: {total_distance} < {self.min_distance_threshold}, skip ICP")
             return
             
-        trajectory_points = np.array(trajectory_points)
         knn_index = self.lane_kdtree.query(trajectory_points, k=self.knn_neighbors)[1]
         best_lane_points = utils.find_interception_normal_shooting_nextpoint_tangent(
             trajectory_points, knn_index, self.lane_points, self.lane_points_next
@@ -351,6 +353,9 @@ class OdomCorrection(Node):
             pose_history = []
             self.pose_history = np.array(self.pose_history)
             
+            self.delta_t_acc[:2,-1]=R_total@self.delta_t_acc[:2,-1]+T_total
+            self.delta_t_acc[0:2,0:2]=R_total@self.delta_t_acc[0:2,0:2]
+
             # Apply 2D transformation to pose history
             for pose in self.pose_history:
                 point_xy = np.array([pose.position.x, pose.position.y])
@@ -362,16 +367,34 @@ class OdomCorrection(Node):
             self.pose_history = pose_history
             
             # Build 3D transformation matrix for service call
-            R_3d = np.eye(3)
-            R_3d[:2, :2] = R_total
-            T_3d = np.zeros(3)
-            T_3d[:2] = T_total
-            
-            self._send_transform_correction(R_3d, T_3d)
+       
+            # self._send_transform_correction(R_3d, T_3d)
             self.get_logger().debug(f"frame {self.frame_count} T_total: {T_total}, R_total: {R_total}")
         else:
             self.get_logger().info(f"frame {self.frame_count} Fail threshold, ICP final error: {final_error}")
-        
+
+    def publish_odom(self, pose: Pose) -> None:
+        """
+        Publish the aligned odometry message.
+        Parameters
+        ----------
+        pose : geometry_msgs.msg.Pose
+            Pose to publish.
+
+        Notes
+        -----
+        The pose is published as an Odometry message with the pose in the pose field.   
+        """
+        odom_msg = Odometry()
+        odom_msg.header.frame_id = "odom" 
+        odom_msg.child_frame_id = "velo_link"
+
+        odom_msg.header.stamp = self.get_clock().now().to_msg()
+        odom_msg.pose.pose=pose
+        self.publisher_odom.publish(odom_msg)
+
+        self.get_logger().debug(f"frame {self.frame_count} pose: {pose.position.x}, {pose.position.y}, {pose.position.z}")
+
     def odom_callback(self, msg: Odometry) -> None:
         """
         Process incoming odometry messages and manage pose history sliding window.
@@ -398,13 +421,19 @@ class OdomCorrection(Node):
         with computational efficiency (bounded buffer size).
         """
         transformed_pose = utils.transform_pose(msg.pose.pose, self.base_to_velo)
-
+        point_xy = np.array([transformed_pose.position.x, transformed_pose.position.y])
+        point_xy = self.delta_t_acc[:2,0:2] @ point_xy + self.delta_t_acc[:2,-1]
+        transformed_pose.position.x = point_xy[0]
+        transformed_pose.position.y = point_xy[1]
         self.pose_history.append(transformed_pose)
         
         if len(self.pose_history) == self.pose_history_size:
             self.align_pose()
             self.pose_history.pop(0)
         self.frame_count += 1
+        
+        transformed_pose = utils.transform_pose(self.pose_history[-1], inv(self.base_to_velo))
+        self.publish_odom(transformed_pose)
 
     def get_transform_matrix_from_tf(
         self, 

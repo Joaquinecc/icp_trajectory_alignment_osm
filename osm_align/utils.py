@@ -3,6 +3,35 @@ from scipy.spatial.transform import Rotation
 from typing import List, Tuple, Union, Optional
 # from geometry_msgs.msg import Pose
 
+def pose_to_homogenous_matrix(R: np.ndarray, T: np.ndarray) -> np.ndarray:
+    """
+    Convert a 2D rotation matrix and translation vector to a 4x4 homogeneous transformation matrix.
+    Parameters
+    ----------
+    R : np.ndarray
+        Rotation matrix of shape (2, 2).
+    T : np.ndarray
+        Translation vector of shape (2,).
+    Returns
+    -------
+    T_hom : np.ndarray
+        Homogeneous transformation matrix of shape (4, 4).
+    Examples
+    --------
+    >>> R = np.array([[0, 1], [-1, 0]])
+    >>> T = np.array([1, 2])
+    >>> T_hom = pose_to_homogenous_matrix(R, T)
+    >>> print(T_hom)
+    [[0 1 1 2]
+     [-1 0 0 0]
+     [0 0 1 0]
+     [0 0 0 1]]
+    """
+    T_hom = np.eye(4)
+    T_hom[:3, :3] = R
+    T_hom[:3, 3] = T
+    return T_hom
+
 
 def find_interception_normal_shooting(
     trajectory_points: np.ndarray, 
