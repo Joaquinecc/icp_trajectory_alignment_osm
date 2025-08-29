@@ -6,30 +6,15 @@ A ROS2 package for real-time odometry trajectory correction using OpenStreetMap 
 
 OSM Align implements trajectory-to-map alignment for autonomous vehicle navigation, correcting drift in laser odometry systems using OpenStreetMap road network data. The system uses Lanelet2 library to process OSM data and publishes corrected odometry on `/osm_align/odom_aligned`.
 
-### Key Features
+## Algorithm Overview
 
-- **Real-time odometry correction** using OpenStreetMap road network data
-- **Robust alignment algorithms** including ICP and RANSAC for drift correction
-- **Sliding window trajectory buffering** for efficient pose management
-- **Works with any odometry source** that publishes `nav_msgs/Odometry` (LIODOM was used only for testing)
-- **Publishes corrected odometry** on `/osm_align/odom_aligned`
-- **Configurable parameters** for different environments and datasets
-- **KITTI dataset compatibility** with pre-configured coordinate systems
+1. **Trajectory Buffering**: Maintains a sliding window of recent odometry poses
+2. **Map Loading**: Loads OSM lanelet data and converts to 2D point cloud representation
+3. **Correspondence Finding**: Uses KD-tree for efficient nearest neighbor queries
+4. **Normal Shooting**: Projects trajectory normals to find map intersections
+5. **Robust Alignment**: Employs trimmed/RANSAC ICP for drift-resistant pose correction
+6. **Publish Corrected Odometry**: Outputs corrected poses on `/osm_align/odom_aligned`
 
-## System Architecture
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Odometry      │───▶│   OSM Align     │───▶│  Corrected      │
-│ (any source)    │    │     Node        │    │   Odometry      │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                             │
-                             ▼
-                      ┌─────────────────┐
-                      │  OpenStreetMap  │
-                      │  Lanelet Data   │
-                      └─────────────────┘
-```
 
 ## Requirements
 
@@ -67,7 +52,7 @@ git clone <repository-url> osm_align
 ### 2. Install Dependencies
 ```bash
 # Install ROS2 dependencies
-sudo apt install ros-humble-lanelet2-core ros-humble-lanelet2-io ros-humble-lanelet2-projection
+sudo apt install ros-<humble>-lanelet2-core ros-humble-lanelet2-io ros-humble-lanelet2-projection
 
 # Install Python dependencies
 pip install numpy scipy transforms3d
@@ -119,15 +104,6 @@ ros2 launch osm_align osm_align.launch.py \
 ### Published Topics
 - `/osm_align/odom_aligned` (`nav_msgs/Odometry`) - Corrected odometry
 
-## Algorithm Overview
-
-1. **Trajectory Buffering**: Maintains a sliding window of recent odometry poses
-2. **Map Loading**: Loads OSM lanelet data and converts to point cloud representation
-3. **Correspondence Finding**: Uses KD-tree for efficient nearest neighbor queries
-4. **Normal Shooting**: Projects trajectory normals to find map intersections
-5. **Robust Alignment**: Employs trimmed/RANSAC ICP for drift-resistant pose correction
-6. **Publish Corrected Odometry**: Outputs corrected poses on `/osm_align/odom_aligned`
-
 ## Testing
 
 The package has been tested with:
@@ -175,13 +151,6 @@ Enable debug logging to monitor alignment performance:
 ros2 launch osm_align osm_align.launch.py --ros-args --log-level debug
 ```
 
-## Contributing
-
-Contributions are welcome! Please follow:
-1. ROS2 coding standards
-2. Python PEP 8 style guidelines
-3. Comprehensive documentation for new features
-4. Unit tests for critical functionality
 
 ## License
 
@@ -189,8 +158,8 @@ This project is licensed under the Apache License 2.0. See `LICENSE` file for de
 
 ## Maintainer
 
-**Joaquin Distance**  
-Email: joaquin@distance.tech
+**Joaquin Caballero**  
+Email: joaquin@gmail.com
 
 ## Acknowledgments
 
