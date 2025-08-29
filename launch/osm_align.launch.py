@@ -25,7 +25,6 @@ def generate_launch_description():
     - trimming_ratio: Trimming ratio for robust ICP (default: 0.2)
     - min_distance_threshold: Minimum trajectory distance for alignment (default: 10.0)
     - odom_topic: Input odometry topic name (default: '/liodom/odom')
-    - transform_correction_service: Transform correction service name (default: '/liodom/transform_correction')
     - save_resuts_path: Directory to save results (poses.txt, runtime.txt). If empty, results are not saved.
     
     Example usage:
@@ -53,7 +52,7 @@ def generate_launch_description():
     
     declare_knn_neighbors = DeclareLaunchArgument(
         'knn_neighbors',
-        default_value='20', 
+        default_value='100', 
         description='Number of nearest neighbors for KD-tree spatial queries'
     )
     
@@ -65,13 +64,13 @@ def generate_launch_description():
     
     declare_icp_error_threshold = DeclareLaunchArgument(
         'icp_error_threshold',
-        default_value='2.0',
+        default_value='1.5',
         description='Maximum acceptable ICP alignment error threshold'
     )
     
     declare_trimming_ratio = DeclareLaunchArgument(
         'trimming_ratio',
-        default_value='0.2',
+        default_value='0.4',
         description='Trimming ratio for robust ICP algorithm'
     )
     
@@ -87,15 +86,9 @@ def generate_launch_description():
         description='Input odometry topic name'
     )
     
-    declare_transform_correction_service = DeclareLaunchArgument(
-        'transform_correction_service',
-        default_value='/liodom/transform_correction', 
-        description='Transform correction service name for LIO-SAM integration'
-    )
-
     declare_save_resuts_path = DeclareLaunchArgument(
         'save_resuts_path',
-        default_value='/home/joaquinecc/Documents/ros_projects/results/osm_aligned/exp1/',
+        default_value='/home/joaquinecc/Documents/ros_projects/results/osm_aligned/exp4/',
         description='Directory to save results (poses.txt, runtime.txt). If empty, results are not saved.'
     )
     
@@ -116,7 +109,6 @@ def generate_launch_description():
             'trimming_ratio': LaunchConfiguration('trimming_ratio'),
             'min_distance_threshold': LaunchConfiguration('min_distance_threshold'),
             'odom_topic': LaunchConfiguration('odom_topic'),
-            'transform_correction_service': LaunchConfiguration('transform_correction_service'),
             'save_resuts_path': LaunchConfiguration('save_resuts_path')
         }],
         remappings=[
@@ -135,7 +127,6 @@ def generate_launch_description():
         declare_trimming_ratio,
         declare_min_distance_threshold,
         declare_odom_topic,
-        declare_transform_correction_service,
         declare_save_resuts_path,
         osm_align_node
     ]) 

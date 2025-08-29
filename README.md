@@ -4,14 +4,15 @@ A ROS2 package for real-time odometry trajectory correction using OpenStreetMap 
 
 ## Overview
 
-OSM Align implements trajectory-to-map alignment for autonomous vehicle navigation, correcting drift in laser odometry systems using OpenStreetMap road network data. The system uses Lanelet2 library to process OSM data and provides transform corrections to odometry systems like LIODOM.
+OSM Align implements trajectory-to-map alignment for autonomous vehicle navigation, correcting drift in laser odometry systems using OpenStreetMap road network data. The system uses Lanelet2 library to process OSM data and publishes corrected odometry on `/osm_align/odom_aligned`.
 
 ### Key Features
 
 - **Real-time odometry correction** using OpenStreetMap road network data
 - **Robust alignment algorithms** including ICP and RANSAC for drift correction
 - **Sliding window trajectory buffering** for efficient pose management
-- **Integration with LIODOM** odometry systems via ROS2 services
+- **Works with any odometry source** that publishes `nav_msgs/Odometry` (LIODOM was used only for testing)
+- **Publishes corrected odometry** on `/osm_align/odom_aligned`
 - **Configurable parameters** for different environments and datasets
 - **KITTI dataset compatibility** with pre-configured coordinate systems
 
@@ -19,15 +20,15 @@ OSM Align implements trajectory-to-map alignment for autonomous vehicle navigati
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Odometry      │───▶│   OSM Align     │───▶│  Transform      │
-│   (LIODOM)     │    │   Node          │    │  Correction     │
+│   Odometry      │───▶│   OSM Align     │───▶│  Corrected      │
+│ (any source)    │    │     Node        │    │   Odometry      │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                       ┌─────────────────┐
-                       │  OpenStreetMap  │
-                       │  Lanelet Data   │
-                       └─────────────────┘
+                             │
+                             ▼
+                      ┌─────────────────┐
+                      │  OpenStreetMap  │
+                      │  Lanelet Data   │
+                      └─────────────────┘
 ```
 
 ## Requirements
@@ -90,8 +91,8 @@ ros2 launch osm_align osm_align.launch.py
 ```bash
 ros2 launch osm_align osm_align.launch.py \
     frame_id:=02 \
-    pose_history_size:=100 \
-    icp_error_threshold:=1.0 \
+    pose_segment_size:=150 \
+    icp_error_threshold:=1.5 \
     odom_topic:=/your_odom_topic
 ```
 
@@ -101,25 +102,22 @@ ros2 launch osm_align osm_align.launch.py \
 |-----------|---------|-------------|
 | `frame_id` | `"00"` | KITTI sequence identifier for coordinate system |
 | `map_lanelet_path` | `""` | Path to OSM lanelet file (auto-constructed if empty) |
-| `pose_history_size` | `50` | Number of poses in sliding window buffer |
+| `pose_segment_size` | `150` | Number of poses in sliding window buffer |
 | `knn_neighbors` | `100` | Number of nearest neighbors for spatial queries |
-| `valid_correspondence_threshold` | `0.6` | Minimum ratio of valid correspondences |
-| `icp_error_threshold` | `1.0` | Maximum ICP error for successful alignment |
-| `min_sample_size` | `10` | Minimum samples for RANSAC-ICP |
-| `min_distance_threshold` | `20.0` | Minimum trajectory distance before alignment |
+| `valid_correspondence_threshold` | `0.9` | Minimum ratio of valid correspondences |
+| `icp_error_threshold` | `1.5` | Maximum ICP error for successful alignment |
+| `trimming_ratio` | `0.4` | Trimming ratio for robust ICP |
+| `min_distance_threshold` | `10.0` | Minimum trajectory distance before alignment |
 | `odom_topic` | `"/liodom/odom"` | Input odometry topic name |
-| `transform_correction_service` | `"/liodom/transform_correction"` | Transform correction service name |
+| `save_resuts_path` | `'/home/.../results/osm_aligned/...'` | Directory to save results (optional) |
 
-## Topics and Services
+## Topics
 
 ### Subscribed Topics
-- `/liodom/odom` (`nav_msgs/Odometry`) - Input odometry messages
-
-### Services Called
-- `/liodom/transform_correction` (`liodom/TransformCorrection`) - Sends transform corrections to odometry system
+- `odom_topic` (`nav_msgs/Odometry`) - Input odometry messages (default `/liodom/odom`)
 
 ### Published Topics
-- Various debug and visualization topics (pose arrays, alignment results)
+- `/osm_align/odom_aligned` (`nav_msgs/Odometry`) - Corrected odometry
 
 ## Algorithm Overview
 
@@ -127,19 +125,19 @@ ros2 launch osm_align osm_align.launch.py \
 2. **Map Loading**: Loads OSM lanelet data and converts to point cloud representation
 3. **Correspondence Finding**: Uses KD-tree for efficient nearest neighbor queries
 4. **Normal Shooting**: Projects trajectory normals to find map intersections
-5. **Robust Alignment**: Employs RANSAC-ICP for drift-resistant pose correction
-6. **Transform Application**: Sends corrections to odometry system via ROS2 service
+5. **Robust Alignment**: Employs trimmed/RANSAC ICP for drift-resistant pose correction
+6. **Publish Corrected Odometry**: Outputs corrected poses on `/osm_align/odom_aligned`
 
 ## Testing
 
-The package has been extensively tested with:
+The package has been tested with:
 
 ### Datasets
 - **KITTI Odometry Dataset** - Multiple sequences (00, 01, 02, etc.)
 
 ### Odometry Systems
-- **LIODOM** - Lidar Inertial Odometry via Smoothing and Mapping
-- **Other odometry systems** compatible with the service interface
+- **LIODOM** - Lidar Inertial Odometry via Smoothing and Mapping (for testing)
+- **Any odometry source** that publishes `nav_msgs/Odometry`
 
 ## Configuration for KITTI Dataset
 
@@ -167,7 +165,7 @@ ros2 launch osm_align osm_align.launch.py \
 ### Common Issues
 
 1. **Map Loading Errors**: Ensure OSM file contains valid lanelet data
-2. **Service Connection**: Verify odometry system provides transform correction service
+2. **Odometry Input**: Verify the configured `odom_topic` is being published
 3. **Coordinate Frames**: Check that map and odometry coordinate systems are properly aligned
 
 ### Debug Information
