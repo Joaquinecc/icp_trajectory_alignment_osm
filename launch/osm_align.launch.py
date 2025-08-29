@@ -18,17 +18,17 @@ def generate_launch_description():
     Launch arguments:
     - frame_id: KITTI sequence identifier (default: '00')
     - map_lanelet_path: Path to OSM lanelet file (default: auto-constructed from frame_id)
-    - pose_history_size: Number of poses in sliding window buffer (default: 50)
+    - pose_segment_size: Number of poses in sliding window buffer (default: 50)
     - knn_neighbors: Number of nearest neighbors for KD-tree queries (default: 10) 
     - valid_correspondence_threshold: Minimum ratio of valid correspondences (default: 0.6)
     - icp_error_threshold: Maximum ICP error for successful alignment (default: 1.5)
     - trimming_ratio: Trimming ratio for robust ICP (default: 0.2)
     - min_distance_threshold: Minimum trajectory distance for alignment (default: 10.0)
     - odom_topic: Input odometry topic name (default: '/liodom/odom')
-    - transform_correction_service: Transform correction service name (default: '/liodom/transform_correction')
+    - save_resuts_path: Directory to save results (poses.txt, runtime.txt). If empty, results are not saved.
     
     Example usage:
-    ros2 launch osm_align osm_align.launch.py frame_id:=02 pose_history_size:=100
+    ros2 launch osm_align osm_align.launch.py frame_id:=02 pose_segment_size:=100
     """
     
     # Declare launch arguments with default values
@@ -44,33 +44,33 @@ def generate_launch_description():
         description='Path to OSM lanelet file (empty = auto-construct from frame_id)'
     )
     
-    declare_pose_history_size = DeclareLaunchArgument(
-        'pose_history_size', 
-        default_value='100',
+    declare_pose_segment_size = DeclareLaunchArgument(
+        'pose_segment_size', 
+        default_value='150',
         description='Number of poses to maintain in sliding window buffer'
     )
     
     declare_knn_neighbors = DeclareLaunchArgument(
         'knn_neighbors',
-        default_value='15', 
+        default_value='100', 
         description='Number of nearest neighbors for KD-tree spatial queries'
     )
     
     declare_valid_correspondence_threshold = DeclareLaunchArgument(
         'valid_correspondence_threshold',
-        default_value='0.8',
+        default_value='0.9',
         description='Minimum ratio of valid trajectory-to-map correspondences'
     )
     
     declare_icp_error_threshold = DeclareLaunchArgument(
         'icp_error_threshold',
-        default_value='1.0',
+        default_value='1.5',
         description='Maximum acceptable ICP alignment error threshold'
     )
     
     declare_trimming_ratio = DeclareLaunchArgument(
         'trimming_ratio',
-        default_value='0.2',
+        default_value='0.4',
         description='Trimming ratio for robust ICP algorithm'
     )
     
@@ -86,10 +86,10 @@ def generate_launch_description():
         description='Input odometry topic name'
     )
     
-    declare_transform_correction_service = DeclareLaunchArgument(
-        'transform_correction_service',
-        default_value='/liodom/transform_correction', 
-        description='Transform correction service name for LIO-SAM integration'
+    declare_save_resuts_path = DeclareLaunchArgument(
+        'save_resuts_path',
+        default_value='/home/joaquinecc/Documents/ros_projects/results/osm_aligned/exp4/',
+        description='Directory to save results (poses.txt, runtime.txt). If empty, results are not saved.'
     )
     
     # Create the node with parameters
@@ -102,14 +102,14 @@ def generate_launch_description():
             # 'frame_id': LaunchConfiguration('frame_id'),
             'frame_id': ParameterValue(LaunchConfiguration('frame_id'), value_type=str),
             'map_lanelet_path': LaunchConfiguration('map_lanelet_path'),
-            'pose_history_size': LaunchConfiguration('pose_history_size'),
+            'pose_segment_size': LaunchConfiguration('pose_segment_size'),
             'knn_neighbors': LaunchConfiguration('knn_neighbors'), 
             'valid_correspondence_threshold': LaunchConfiguration('valid_correspondence_threshold'),
             'icp_error_threshold': LaunchConfiguration('icp_error_threshold'),
             'trimming_ratio': LaunchConfiguration('trimming_ratio'),
             'min_distance_threshold': LaunchConfiguration('min_distance_threshold'),
             'odom_topic': LaunchConfiguration('odom_topic'),
-            'transform_correction_service': LaunchConfiguration('transform_correction_service')
+            'save_resuts_path': LaunchConfiguration('save_resuts_path')
         }],
         remappings=[
             # Remap the odometry topic if specified
@@ -120,13 +120,13 @@ def generate_launch_description():
     return LaunchDescription([
         declare_frame_id,
         declare_map_lanelet_path,
-        declare_pose_history_size,
+        declare_pose_segment_size,
         declare_knn_neighbors,
         declare_valid_correspondence_threshold,
         declare_icp_error_threshold,
         declare_trimming_ratio,
         declare_min_distance_threshold,
         declare_odom_topic,
-        declare_transform_correction_service,
+        declare_save_resuts_path,
         osm_align_node
     ]) 
