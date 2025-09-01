@@ -1,78 +1,45 @@
+"""ROS2 node for odometry alignment against Lanelet2 centerlines using trimmed ICP."""
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import PoseArray, Pose
+from geometry_msgs.msg import Pose
 import numpy as np
-import math
 from typing import List, Tuple, Optional
 import os
 import lanelet2
 from scipy.spatial.transform import Rotation
 from scipy.spatial import cKDTree
 from tf2_ros import Buffer, TransformListener
-from geometry_msgs.msg import Pose
-import osm_align.utils as utils
-from osm_align.kitti_utils import angle_dict, cordinta_dict
-import argparse
-import sys
+import osm_align.utils.utils as utils
+from osm_align.utils.kitti_utils import angle_dict, cordinta_dict
 from scipy.linalg import inv
 import time
-
+from osm_align.odometry_correction import OdomCorrector
 # Configuration parameters are now declared as ROS parameters in the node
 
 
-class OdomCorrection(Node):
+class KittiOdometryCorrection(Node):
     """
-    ROS2 node for real-time odometry correction using lanelet map alignment.
+    ROS2 node that aligns odometry to OSM/Lanelet2 centerlines.
 
-    Subscribes to odometry messages, maintains a sliding window of poses, and
-    periodically aligns the trajectory to a lanelet map using robust ICP algorithms
-    and publishes corrected odometry on '/osm_align/odom_aligned'.
-
-    The node subscribes to a configurable odometry topic and works with any
-    odometry source as long as a lanelet map and the odometry topic are available.
-    LIODOM was used only for testing and is not required.
-
-    This node implements trajectory-to-map alignment for autonomous vehicle navigation,
-    correcting drift in laser odometry using high-definition map data.
+    The node subscribes to an odometry topic, transforms poses into the
+    sensor frame, applies a dataset-agnostic odometry correction via
+    `OdomCorrector`, and republishes the corrected odometry. It also
+    supports saving alignment runtime and trajectory matrices.
 
     Parameters
     ----------
-    map_lanelet_path : str
-    	Path to the OpenStreetMap (.osm) file containing lanelet road network data.
-    origin_coords_lanelet : list of float
-    	GPS origin coordinates [latitude, longitude] for map projection.
-    angle_lanelet_correction : float
-    	Rotation angle in degrees to align map coordinate system with vehicle frame.
-    frame_id : str, optional
-    	KITTI sequence identifier for logging and configuration, by default "00".
-
-    Attributes
-    ----------
-    pose_segment : list of Pose
-    	Sliding window of recent pose messages for trajectory alignment.
-    lane_points : np.ndarray
-    	Processed lanelet centerline points in vehicle coordinate system.
-    lane_kdtree : scipy.spatial.cKDTree
-    	Spatial index for efficient nearest neighbor queries on map points.
-
-    Examples
-    --------
-    >>> # Initialize node with KITTI sequence 02 parameters
-    >>> node = OdomCorrection(
-    ...     map_lanelet_path="/path/to/lanelet2_seq_02.osm",
-    ...     origin_coords_lanelet=[48.987607, 8.469747],
-    ...     angle_lanelet_correction=-53.5,
-    ...     frame_id="02"
-    ... )
-    >>> rclpy.spin(node)
+    map_lanelet_path : Optional[str], default None
+        Optional external path to a Lanelet2 map. If not provided, a path is
+        constructed automatically from `frame_id`.
     """
+
 
     def __init__(
         self, 
-        map_lanelet_path: str = None
+        map_lanelet_path: Optional[str] = None
     ) -> None:
-        super().__init__('osm_align_node')
+        super().__init__('kitti_odometry_correction_node')
         self.frame_count: int = 0
         # Declare ROS parameters with default values
         self.declare_parameter('frame_id', '00')
@@ -99,16 +66,7 @@ class OdomCorrection(Node):
         self.min_distance_threshold: float = self.get_parameter('min_distance_threshold').get_parameter_value().double_value
         self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.save_resuts_path: str = self.get_parameter('save_resuts_path').get_parameter_value().string_value
-
-
-        # Build map parameters from frame_id if not provided directly
-        if map_lanelet_path is not None:
-            self.map_lanelet_path: str = map_lanelet_path
-        elif map_lanelet_path_param and map_lanelet_path_param.strip():
-            self.map_lanelet_path: str = map_lanelet_path_param
-        else:
-            # Auto-construct path from frame_id
-            self.map_lanelet_path: str = f'/home/joaquinecc/Documents/dataset/kitti/dataset/map/{self.frame_id}/lanelet2_seq_{self.frame_id}.osm'
+        self.map_lanelet_path: str = f'/home/joaquinecc/Documents/dataset/kitti/dataset/map/{self.frame_id}/lanelet2_seq_{self.frame_id}.osm'
             
         # Always use frame_id to get origin coordinates and angle correction from dictionaries
         self.origin_coords_lanelet: List[float] = [cordinta_dict[self.frame_id]['origin_lat'], cordinta_dict[self.frame_id]['origin_lon']]
@@ -130,8 +88,6 @@ class OdomCorrection(Node):
         # Initialize lanelet-related variables
         self.projector: Optional[lanelet2.projection.UtmProjector] = None
         self.lanelet_map: Optional[lanelet2.core.LaneletMap] = None
-        self.lane_kdtree: Optional[cKDTree] = None
-        self.lane_cloud: Optional[np.ndarray] = None
         self.lane_points: Optional[np.ndarray] = None
         self.lane_points_next: Optional[np.ndarray] = None
         self.pose_segment: List[Pose] = []
@@ -143,6 +99,20 @@ class OdomCorrection(Node):
         self._load_lanelet_map()
         self._build_lane_kdtree()
         
+
+
+
+        args={
+            'pose_segment_size': self.pose_segment_size,
+            'knn_neighbors': self.knn_neighbors,
+            'valid_correspondence_threshold': self.valid_correspondence_threshold,
+            'icp_error_threshold': self.icp_error_threshold,
+            'trimming_ratio': self.trimming_ratio,
+            'min_distance_threshold': self.min_distance_threshold,
+        }
+        self.trajectory_correction=OdomCorrector(self.lane_points, self.lane_points_next, self.lane_kdtree, args)
+
+
         # Create subscription
         self.subscription = self.create_subscription(   
             Odometry,
@@ -247,92 +217,14 @@ class OdomCorrection(Node):
         self.lane_kdtree = cKDTree(self.lane_points)
         
         self.get_logger().info(f"Built KD-tree with {len(lane_points)} lane points")
-   
-
-    def align_pose(self) -> None:
-        """
-        Align current pose history to lanelet map using robust ICP registration.
-
-        This method implements the core trajectory-to-map alignment algorithm:
-        1. Extracts (x, y) positions from the pose history sliding window
-        2. Finds nearest lanelet map points using KD-tree spatial queries
-        3. Computes optimal correspondences using normal shooting with tangent alignment
-        4. Filters correspondences based on validity threshold
-        5. Applies RANSAC-based ICP for robust transformation estimation
-        6. Updates pose history; corrected odometry is published by the callback
-
-        The alignment process includes several robustness mechanisms:
-        - Minimum trajectory distance requirement (10m) to ensure sufficient motion
-        - Correspondence quality filtering to remove outliers
-        - RANSAC-ICP with weighted sampling favoring recent poses
-        - Error threshold validation before applying corrections
-
-        Logs
-        ----
-        - Number of valid correspondences found
-        - ICP final error and success/failure status  
-        - Transformation parameters when alignment succeeds
-
-        Notes
-        -----
-        Only x and y coordinates are transformed; z coordinates remain unchanged.
-        The transformation is applied in-place to the pose history and then used
-        in subsequent odometry publications.
-        """
-        trajectory_points = np.array([[pose.position.x, pose.position.y] for pose in self.pose_segment])
-        total_distance = np.sum(np.linalg.norm(np.diff(trajectory_points, axis=0), axis=1))
-        
-        if total_distance < self.min_distance_threshold:
-            self.get_logger().info(f"frame {self.frame_count} total_distance: {total_distance} < {self.min_distance_threshold}, skip ICP")
-            return
-            
-        knn_index = self.lane_kdtree.query(trajectory_points, k=self.knn_neighbors)[1]
-        best_lane_points = utils.find_interception_normal_shooting_nextpoint_tangent(
-            trajectory_points, knn_index, self.lane_points, self.lane_points_next
-        )
-        valid_mask = ~np.isnan(best_lane_points).any(axis=1)
-
-        if valid_mask.sum() < len(self.pose_segment) * self.valid_correspondence_threshold:
-            self.get_logger().info(f"frame {self.frame_count} ({valid_mask.sum()}) Not enough valid correspondences for ICP alignment")
-            return
-
-     
-        R_total, T_total, final_error = utils.solve_trimmed_icp_2d(
-            trajectory_points[valid_mask], 
-            best_lane_points[valid_mask], 
-            trimming_ratio=self.trimming_ratio,
-        )
-        if final_error < self.icp_error_threshold:
-            self.get_logger().info(f"frame {self.frame_count} Pass threshold, ICP final error: {final_error}")
-
-            pose_segment = []
-            self.pose_segment = np.array(self.pose_segment)
-            
-            self.delta_t_acc[:2,-1]=R_total@self.delta_t_acc[:2,-1]+T_total
-            self.delta_t_acc[0:2,0:2]=R_total@self.delta_t_acc[0:2,0:2]
-
-            # Apply 2D transformation to pose history
-            for pose in self.pose_segment:
-                point_xy = np.array([pose.position.x, pose.position.y])
-                point_xy = R_total @ point_xy + T_total
-                pose.position.x = point_xy[0]
-                pose.position.y = point_xy[1]  
-                # pose.position.z remains unchanged
-                pose_segment.append(pose)
-            self.pose_segment = pose_segment
-            
-            # Accumulated 2D transform updated; corrected odometry is published in odom_callback
-            self.get_logger().debug(f"frame {self.frame_count} T_total: {T_total}, R_total: {R_total}")
-        else:
-            self.get_logger().info(f"frame {self.frame_count} Fail threshold, ICP final error: {final_error}")
-
+ 
     def publish_odom(self, pose: Pose) -> None:
         """
         Publish the aligned odometry message.
         Parameters
         ----------
         pose : geometry_msgs.msg.Pose
-        	Pose to publish.
+            Pose to publish.
 
         Notes
         -----
@@ -341,6 +233,7 @@ class OdomCorrection(Node):
         odom_msg = Odometry()
         odom_msg.header.frame_id = "odom" 
         odom_msg.child_frame_id = "velo_link"
+        
 
         odom_msg.header.stamp = self.get_clock().now().to_msg()
         odom_msg.pose.pose=pose
@@ -348,12 +241,24 @@ class OdomCorrection(Node):
 
         self.get_logger().debug(f"frame {self.frame_count} pose: {pose.position.x}, {pose.position.y}, {pose.position.z}")
 
-    def _pose_to_3x4(self, pose: Pose) -> np.ndarray:
-        """Convert geometry_msgs/Pose to 3x4 matrix line (row-major)"""
+    def _pose_to_4x4(self, pose: Pose) -> np.ndarray:
+        """
+        Convert geometry_msgs/Pose to a 4x4 homogeneous transformation matrix.
+
+        Parameters
+        ----------
+        pose : geometry_msgs.msg.Pose
+            Input pose with position and orientation (quaternion).
+
+        Returns
+        -------
+        numpy.ndarray
+            A 4x4 homogeneous matrix in row-major layout.
+        """
         quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
         R3 = Rotation.from_quat(quat).as_matrix()
         t = np.array([pose.position.x, pose.position.y, pose.position.z])
-        M = np.zeros((3, 4))
+        M = np.eye(4)
         M[:3, :3] = R3
         M[:3, 3] = t
         return M
@@ -380,50 +285,41 @@ class OdomCorrection(Node):
 
     def odom_callback(self, msg: Odometry) -> None:
         """
-        Process incoming odometry messages and manage pose history sliding window.
+        Callback processing incoming odometry messages.
 
-        Transforms each incoming pose from base_link to velodyne frame, adds it
-        to the pose history buffer, and triggers alignment when the buffer is full.
-        Implements a sliding window approach to maintain computational efficiency.
+        The pose is transformed into the sensor frame, corrected using
+        `OdomCorrector`, appended to history, and then transformed back
+        before republishing on the aligned odometry topic.
 
         Parameters
         ----------
         msg : nav_msgs.msg.Odometry
-        	Incoming odometry message containing pose and twist information.
-        	Only the pose component is used for alignment.
-
-        Notes
-        -----
-        The sliding window approach:
-        1. Accumulates poses until buffer reaches pose_segment_size_
-        2. Triggers alignment algorithm when buffer is full
-        3. Removes oldest pose to maintain fixed buffer size
-        4. Continues processing with updated poses
-
-        This design balances alignment accuracy (sufficient trajectory length)
-        with computational efficiency (bounded buffer size).
+            Incoming odometry message.
         """
-        transformed_pose = utils.transform_pose(msg.pose.pose, self.base_to_velo)
-        point_xy = np.array([transformed_pose.position.x, transformed_pose.position.y])
-        point_xy = self.delta_t_acc[:2,0:2] @ point_xy + self.delta_t_acc[:2,-1]
-        transformed_pose.position.x = point_xy[0]
-        transformed_pose.position.y = point_xy[1]
-        self.pose_segment.append(transformed_pose)
-        
-        if len(self.pose_segment) == self.pose_segment_size:
-            t0 = time.perf_counter()
-            self.align_pose()
-            dt = time.perf_counter() - t0
-            self.align_runtimes.append(dt)
-            self.pose_segment.pop(0)
-        self.frame_count += 1
-        
-        # Record pose to history before publishing
-        M = self._pose_to_3x4(transformed_pose)
-        self.poses_history.append(M)
-        transformed_pose = utils.transform_pose(self.pose_segment[-1], inv(self.base_to_velo))
+        #move to velodyne frame
+        transformed_pose = self.base_to_velo@self._pose_to_4x4(msg.pose.pose)
+        t0 = time.perf_counter()
+        pose_corrected=self.trajectory_correction.apply(transformed_pose)
+        dt = time.perf_counter() - t0
 
-        self.publish_odom(transformed_pose)
+        self.get_logger().info(f"frame {self.frame_count} align runtime: {dt}")
+        self.align_runtimes.append(dt)
+        self.frame_count += 1
+        self.poses_history.append(pose_corrected)
+
+
+        # Record pose to history before publishing
+        pose_corrected = inv(self.base_to_velo) @pose_corrected
+        pose_recived=msg.pose.pose
+        pose_recived.position.x=pose_corrected[0, -1]
+        pose_recived.position.y=pose_corrected[1, -1]
+        pose_recived.position.z=pose_corrected[2, -1]
+        pose_recived.orientation.x=pose_corrected[0, 0]
+        pose_recived.orientation.y=pose_corrected[1, 0]
+        pose_recived.orientation.z=pose_corrected[2, 0]
+        pose_recived.orientation.w=pose_corrected[3, 0]
+        self.publish_odom(pose_recived)
+
 
     def get_transform_matrix_from_tf(
         self, 
@@ -535,7 +431,7 @@ def main(args: Optional[List[str]] = None) -> None:
     rclpy.init(args=args)
     
     # Create node - parameters will be read from ROS parameter system
-    node = OdomCorrection()
+    node = KittiOdometryCorrection()
     
     # Log the configuration being used
     node.get_logger().info(f"Starting OSM Alignment with frame_id: {node.frame_id}")
