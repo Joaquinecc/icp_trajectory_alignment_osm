@@ -17,7 +17,8 @@ import time
 from osm_align.odometry_correction import OdomCorrector
 # Configuration parameters are now declared as ROS parameters in the node
 
-
+BASE_FRAME="base_link", 
+SENSOR_FRAME="velo_link", 
 class KittiOdometryCorrection(Node):
     """
     ROS2 node that aligns odometry to OSM/Lanelet2 centerlines.
@@ -57,7 +58,7 @@ class KittiOdometryCorrection(Node):
         
         # Get parameters
         self.frame_id: str = self.get_parameter('frame_id').get_parameter_value().string_value
-        map_lanelet_path_param: str = self.get_parameter('map_lanelet_path').get_parameter_value().string_value
+        # self.map_lanelet_path: str = self.get_parameter('map_lanelet_path').get_parameter_value().string_value
         self.pose_segment_size: int = self.get_parameter('pose_segment_size').get_parameter_value().integer_value
         self.knn_neighbors: int = self.get_parameter('knn_neighbors').get_parameter_value().integer_value
         self.valid_correspondence_threshold: float = self.get_parameter('valid_correspondence_threshold').get_parameter_value().double_value
@@ -66,6 +67,7 @@ class KittiOdometryCorrection(Node):
         self.min_distance_threshold: float = self.get_parameter('min_distance_threshold').get_parameter_value().double_value
         self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.save_resuts_path: str = self.get_parameter('save_resuts_path').get_parameter_value().string_value
+
         self.map_lanelet_path: str = f'/home/joaquinecc/Documents/dataset/kitti/dataset/map/{self.frame_id}/lanelet2_seq_{self.frame_id}.osm'
             
         # Always use frame_id to get origin coordinates and angle correction from dictionaries
@@ -75,7 +77,7 @@ class KittiOdometryCorrection(Node):
         self.get_logger().info(
             f"Parameters:\n"
             f"  frame_id: {self.frame_id}\n"
-            f"  map_lanelet_path: {map_lanelet_path_param}\n"
+            f"  map_lanelet_path: {self.map_lanelet_path}\n"
             f"  pose_segment_size: {self.pose_segment_size}\n"
             f"  knn_neighbors: {self.knn_neighbors}\n"
             f"  valid_correspondence_threshold: {self.valid_correspondence_threshold}\n"
@@ -99,9 +101,6 @@ class KittiOdometryCorrection(Node):
         self._load_lanelet_map()
         self._build_lane_kdtree()
         
-
-
-
         args={
             'pose_segment_size': self.pose_segment_size,
             'knn_neighbors': self.knn_neighbors,
@@ -127,8 +126,8 @@ class KittiOdometryCorrection(Node):
 
 
         self.base_to_velo, _ = self.get_transform_matrix_from_tf(
-            source_frame="base_link", 
-            target_frame="velo_link", 
+            source_frame=BASE_FRAME, 
+            target_frame=SENSOR_FRAME, 
             timeout_sec=5
         )
 

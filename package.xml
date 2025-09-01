@@ -4,7 +4,7 @@
   <name>osm_align</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
-  <maintainer email="joaquin@distance.tech">joaquin-distance</maintainer>
+  <maintainer email="joaquin@gmail.com">joaquin-caballero</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
