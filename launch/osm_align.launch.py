@@ -52,7 +52,7 @@ def generate_launch_description():
     
     declare_knn_neighbors = DeclareLaunchArgument(
         'knn_neighbors',
-        default_value='100', 
+        default_value='20', 
         description='Number of nearest neighbors for KD-tree spatial queries'
     )
     
@@ -64,13 +64,13 @@ def generate_launch_description():
     
     declare_icp_error_threshold = DeclareLaunchArgument(
         'icp_error_threshold',
-        default_value='1.5',
+        default_value='2.0',
         description='Maximum acceptable ICP alignment error threshold'
     )
     
     declare_trimming_ratio = DeclareLaunchArgument(
         'trimming_ratio',
-        default_value='0.4',
+        default_value='0.2',
         description='Trimming ratio for robust ICP algorithm'
     )
     
@@ -88,7 +88,7 @@ def generate_launch_description():
     
     declare_save_resuts_path = DeclareLaunchArgument(
         'save_resuts_path',
-        default_value='/home/joaquinecc/Documents/ros_projects/results/osm_aligned/exp4/',
+        default_value='/home/joaquinecc/Documents/ros_projects/results/osm_aligned/temp/',
         description='Directory to save results (poses.txt, runtime.txt). If empty, results are not saved.'
     )
     
