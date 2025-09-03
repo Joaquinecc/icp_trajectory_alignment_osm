@@ -1,17 +1,10 @@
 import os
-import sys
 
-# Ensure repository root is on sys.path to allow 'osm_align.*' imports
-CURRENT_DIR = os.path.dirname(__file__)
-REPO_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '..', '..'))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
-
-from osm_align.utils.kitti_utils import angle_dict, cordinta_dict, odom_pose, get_pose
+from osm_align.utils.kitti_utils import angle_dict, cordinta_dict, get_pose
 import numpy as np
 from scipy.spatial import cKDTree
 import lanelet2
-from osm_align.odometry_correction import OdomCorrector
+from ..odometry_correction import OdomCorrector
 from evo.main_ape import ape
 from evo.main_rpe import rpe
 from evo.core.trajectory import PosePath3D, Plane
@@ -23,7 +16,7 @@ from typing import List
 
 
 class Odomcorrection():
-
+    
     def __init__(
         self,
         frame_id,
@@ -123,7 +116,7 @@ class Odomcorrection():
         ])
         T_kitti = np.eye(4)
         T_kitti[:3, :3] = R_kitti
-        gt_poses = T_kitti @ odom_pose(gt_path_pose)
+        gt_poses = T_kitti @ get_pose(gt_path_pose)
         traj_GT = PosePath3D(poses_se3=gt_poses)
         traj_est = PosePath3D(poses_se3=self.pose_history)
         
@@ -318,4 +311,4 @@ if __name__ == "__main__":
         min_distance_threshold=args.min_distance_threshold
     )
 
-# python kitti_test.py --frame_id 00 --pose_segment_size 20 --icp_error_threshold 1.0 --trimming_ratio 0.4 --knn_neighbors 10 --valid_correspondence_threshold 0.8 
+# python -m osm_align.experiment.kitti_test --frame_id 00 --pose_segment_size 20 --icp_error_threshold 1.0 --trimming_ratio 0.4 --knn_neighbors 10 --valid_correspondence_threshold 0.8 
