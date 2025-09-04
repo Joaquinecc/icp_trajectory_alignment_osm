@@ -17,8 +17,9 @@ import time
 from osm_align.odometry_correction import OdomCorrector
 # Configuration parameters are now declared as ROS parameters in the node
 
-BASE_FRAME="base_link", 
-SENSOR_FRAME="velo_link", 
+BASE_FRAME="base_link"
+SENSOR_FRAME="velo_link"
+
 class KittiOdometryCorrection(Node):
     """
     ROS2 node that aligns odometry to OSM/Lanelet2 centerlines.
