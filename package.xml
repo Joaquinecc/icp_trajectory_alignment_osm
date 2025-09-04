@@ -19,6 +19,8 @@
   <!-- Add these dependencies -->
   <depend>tf2_ros</depend>
   <depend>tf_transformations</depend>
+  <depend>visualization_msgs</depend>
+  <depend>geometry_msgs</depend>
   
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

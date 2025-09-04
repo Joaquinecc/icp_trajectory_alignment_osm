@@ -1,8 +1,21 @@
 import os
 import numpy as np
 from typing import Dict, List, Tuple, Union
+import math
 
 # Type hints for the configuration dictionaries
+# angle_dict: Dict[str, float] = { #This was computed by the function rotation_alignment_utm_to_kitti_gt
+#     "00": -58.922619848964835,
+#     "01": 92.06246434076236,
+#     "02": -53.69354870803649,
+#     "04": -96.11460573874959,
+#     "05": -99.19843939674873,
+#     "06": 175.56880178138854,
+#     "07": 33.38621359499011,
+#     "08": -6.159108842836925,
+#     "09": 27.772955417117462,
+#     "10": 15.411929213671414
+# }
 angle_dict: Dict[str, float] = {
     "00": -59.0,
     "01": 92.3,
@@ -13,9 +26,7 @@ angle_dict: Dict[str, float] = {
     "07": 33.0,
     "08": -6.0,
     "09": 28.0,
-    "10": 16.0
-}
- 
+    "10": 16.0}
 # Dictionary mapping KITTI frame IDs to origin lat/lon (angle_corr omitted)
 cordinta_dict: Dict[str, Dict[str, float]] = {
     "00": {
@@ -59,6 +70,48 @@ cordinta_dict: Dict[str, Dict[str, float]] = {
         "origin_lon": 8.4785980847297,
     },
 }
+
+
+
+
+def rotation_angle_2d(ref_point, target_point):
+    """
+    Compute the 2D rotation angle (degrees) between two vectors.
+    
+    Parameters
+    ----------
+    ref_point : tuple or list (x, y)
+        The reference vector in the first frame.
+    target_point : tuple or list (x, y)
+        The corresponding vector in the rotated frame.
+    
+    Returns
+    -------
+    float
+        Rotation angle in degrees (positive = counterclockwise).
+    """
+    x, y = ref_point
+    xp, yp = target_point
+
+    # dot and cross (scalar in 2D)
+    dot = x * xp + y * yp
+    cross = x * yp - y * xp
+
+    # norms
+    norm_ref = math.hypot(x, y)
+    norm_target = math.hypot(xp, yp)
+
+    # cosine and sine of the angle
+    cos_theta = dot / (norm_ref * norm_target)
+    sin_theta = cross / (norm_ref * norm_target)
+
+    # clamp cos_theta for numerical safety
+    cos_theta = max(min(cos_theta, 1.0), -1.0)
+
+    angle_rad = math.atan2(sin_theta, cos_theta)
+    angle_deg = math.degrees(angle_rad)
+    return angle_deg
+
 
 
 def get_kitti_sequence_info(seq_id: Union[int, str]) -> Tuple[str, str, List[int]]:
@@ -118,63 +171,6 @@ def get_kitti_sequence_info(seq_id: Union[int, str]) -> Tuple[str, str, List[int
     date, drive, frames = kitti_sequences[seq_id_str]
     return date, drive, frames
 
-def odom_pose(odom_dir: str) -> np.ndarray:
-    """
-    Load KITTI odometry ground truth poses from a text file.
-
-    Reads pose data in KITTI odometry format where each line contains 12 values
-    representing a 3x4 transformation matrix (rotation and translation), and 
-    converts them to 4x4 homogeneous transformation matrices.
-
-    Parameters
-    ----------
-    odom_dir : str
-        Path to the odometry file containing ground truth poses. Each line should
-        contain 12 space-separated floats representing a 3x4 transformation matrix
-        in row-major order.
-
-    Returns
-    -------
-    transformation_matrices : np.ndarray
-        Array of shape (N, 4, 4) containing homogeneous transformation matrices,
-        where N is the number of poses in the file. Each matrix represents the
-        pose of the vehicle at that frame.
-
-    Raises
-    ------
-    FileNotFoundError
-        If the specified odometry file does not exist. Ground truth odometry
-        is only available for 10 sequences in KITTI.
-
-    Examples
-    --------
-    >>> poses = odom_pose("/path/to/kitti/poses/00.txt")
-    >>> print(f"Loaded {len(poses)} poses")
-    >>> print(f"First pose translation: {poses[0][:3, 3]}")
-    Loaded 4541 poses
-    First pose translation: [0. 0. 0.]
-    
-    Notes
-    -----
-    The KITTI odometry format stores poses as 3x4 matrices in the form:
-    [r11 r12 r13 tx r21 r22 r23 ty r31 r32 r33 tz]
-    This function converts them to standard 4x4 homogeneous matrices by
-    adding the bottom row [0 0 0 1].
-    """
-    if not os.path.exists(odom_dir):
-        raise FileNotFoundError(f"Odom directory not found: {odom_dir}, Ground truth(Odometry) is available for only 10 sequences in KITTI. Stopping the process.")
-    with open(odom_dir, 'r') as file:
-        lines = file.readlines()
-    transformation_data = [[float(val) for val in line.split()] for line in lines]
-    homogenous_matrix_arr = []
-    for i in range(len(transformation_data)):
-        homogenous_matrix = np.identity(4)
-        homogenous_matrix[0, :] = transformation_data[i][0:4]
-        homogenous_matrix[1:2, :] = transformation_data[i][4:8]
-        homogenous_matrix[2:3, :] = transformation_data[i][8:12]
-        homogenous_matrix_arr.append(homogenous_matrix)
-    return np.array(homogenous_matrix_arr)
-
 def get_pose(path: str) -> np.ndarray:
     """
     Load pose data from a text file in 3x4 matrix format.
@@ -224,3 +220,100 @@ def get_pose(path: str) -> np.ndarray:
         aux = np.vstack([aux, [0, 0, 0, 1]])
         poses.append(aux)
     return np.array(poses)
+
+
+def rotation_alignment_utm_to_kitti_gt(kitti_raw_dir, kitti_gt_dir):
+    """
+    Compute the mean 2D rotation angle between UTM-projected GPS points and KITTI ground truth poses for each sequence.
+
+    This function aligns UTM-projected GPS coordinates with the corresponding KITTI ground truth (GT) poses
+    for a set of standard KITTI odometry sequences. For each sequence, it computes the mean 2D rotation angle
+    (in degrees) between the UTM-projected GPS points and the translation component of the GT pose, after
+    applying the standard KITTI coordinate transformation.
+
+    Parameters
+    ----------
+    kitti_raw_dir : str
+        Path to the root directory containing raw KITTI data (as required by pykitti).
+    kitti_gt_dir : str
+        Path to the directory containing KITTI ground truth pose files (one file per sequence, e.g., '00.txt').
+
+    Returns
+    -------
+    frame_angle : dict
+        Dictionary mapping KITTI sequence IDs (str) to the mean 2D rotation angle (float, in degrees)
+        between UTM-projected GPS points and KITTI GT poses for that sequence. If no angles are computed
+        for a sequence, the value will be NaN.
+
+    Notes
+    -----
+    - The function uses the following KITTI sequences: '00', '01', '02', '04', '05', '06', '07', '08', '09', '10'.
+    - The UTM projection is initialized using the first GPS coordinate of each sequence as the origin.
+    - The KITTI GT pose is transformed using the standard KITTI rotation matrix before comparison.
+    - The 2D rotation angle is computed using the `rotation_angle_2d` function, comparing the (x, y) components
+      of the UTM-projected GPS point and the GT pose translation.
+    - Requires the following packages: pykitti, lanelet2, numpy.
+
+    Examples
+    --------
+    >>> angles = rotation_alignment_utm_to_kitti_gt("/path/to/kitti/raw", "/path/to/kitti/gt")
+    >>> for seq, angle in angles.items():
+    ...     print(f"Sequence {seq}: mean angle = {angle:.2f} degrees")
+    Sequence 00: mean angle = -0.12 degrees
+    Sequence 01: mean angle = 0.05 degrees
+    ...
+
+    """
+    import pykitti
+    import lanelet2
+    from lanelet2.core import GPSPoint
+
+    BASE_GT_PATH = kitti_gt_dir
+    kitti_dir = kitti_raw_dir
+
+    # KITTI coordinate system rotation matrix (from camera to world)
+    R_kitti = np.array([
+        [0,  0, 1],
+        [-1, 0, 0],
+        [0, -1, 0]
+    ])
+    T_kitti = np.eye(4)
+    T_kitti[:3, :3] = R_kitti
+
+    # List of KITTI odometry sequence IDs to process
+    frames_id = ['00', '01', '02', '04', '05', '06', '07', '08', '09', '10']
+    frame_angle = {}
+
+    for frame_id in frames_id:
+        # Retrieve KITTI sequence metadata
+        date, drive, frames = get_kitti_sequence_info(frame_id)
+        frame_range = list(range(frames[0], frames[1] + 1))
+        # Load raw KITTI data for the sequence
+        kitti_raw = pykitti.raw(kitti_dir, date, drive, frames=frame_range)
+        # Extract GPS coordinates (latitude, longitude, altitude)
+        gps_coords = np.array([[x.packet.lat, x.packet.lon, x.packet.alt] for x in kitti_raw.oxts])
+        # Initialize UTM projector using the first GPS coordinate as the origin
+        origin = gps_coords[0]
+        proj = lanelet2.projection.UtmProjector(lanelet2.io.Origin(origin[0], origin[1], origin[2]))
+        # Load ground truth poses for the sequence
+        gt_path_pose = os.path.join(BASE_GT_PATH, f'{frame_id}.txt')
+        gt_poses = get_pose(gt_path_pose)   
+        # Transform GT poses to KITTI world coordinates
+        gt_poses = np.matmul(T_kitti, gt_poses)  # shape (N, 4, 4)
+        angles = []
+        # Compute 2D rotation angle for each frame (excluding the first)
+        for i in range(1, len(gt_poses)):
+            gps_pt = gps_coords[i]
+            point = proj.forward(GPSPoint(gps_pt[0], gps_pt[1], gps_pt[2]))
+            ref_point = [point.x, point.y, point.z]
+            target_point = gt_poses[i][:3, -1]
+            angle = rotation_angle_2d(ref_point[:2], target_point[:2])
+            angles.append(angle)
+        # Compute mean angle for the sequence
+        if angles:
+            mean_angle = np.mean(angles)
+        else:
+            mean_angle = float('nan')
+        frame_angle[frame_id] = mean_angle
+
+    return frame_angle

@@ -31,6 +31,7 @@ setup(
     entry_points={
         'console_scripts': [
             'kitti_odometry = osm_align.kitti_odometry:main',
+            'viz_map_node = osm_align.viz_map_node:main',
         ],
     },
 )

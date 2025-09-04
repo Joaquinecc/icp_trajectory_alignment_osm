@@ -86,7 +86,7 @@ class OdomCorrector():
         
         if total_distance < self.min_distance_threshold:
             # self.get_logger().info(f"frame {self.frame_count} total_distance: {total_distance} < {self.min_distance_threshold}, skip ICP")
-            return 
+            return 0
             
         knn_index = self.lane_kdtree.query(trajectory_points, k=self.knn_neighbors)[1]
         best_lane_points = utils.find_interception_normal_shooting_nextpoint_tangent(
@@ -106,13 +106,8 @@ class OdomCorrector():
         if final_error < self.icp_error_threshold:
             # self.get_logger().info(f"Pass threshold, ICP final error: {final_error}")
 
-            pose_segment = []
-            self.pose_segment = np.array(self.pose_segment)
-            
-            self.delta_t_acc[:2, -1] = R_total @ self.delta_t_acc[:2, -1] + T_total
-            self.delta_t_acc[0:2, 0:2] = R_total @ self.delta_t_acc[0:2, 0:2]
-
             # Apply 2D transformation to pose history
+            pose_segment = []
             for pose in self.pose_segment:
                 point_xy = np.array([pose[0, -1], pose[1, -1]])
                 point_xy = R_total @ point_xy + T_total
@@ -122,9 +117,14 @@ class OdomCorrector():
                 pose_segment.append(pose)
             self.pose_segment = pose_segment
             
+            #Update delta_t_acc
+            self.delta_t_acc[:2, -1] = R_total @ self.delta_t_acc[:2, -1] + T_total
+            self.delta_t_acc[:2, :2] = R_total @ self.delta_t_acc[:2, :2]
+
+            return final_error
         else:
             # self.get_logger().info(f"Fail threshold, ICP final error: {final_error}")
-            return
+            return 2
 
     def apply(self, pose: np.ndarray) -> np.ndarray:
         """
@@ -143,16 +143,16 @@ class OdomCorrector():
         """
         
         point_xy =  np.array([pose[0, -1], pose[1, -1]])
-        point_xy = self.delta_t_acc[:2, 0:2] @ point_xy + self.delta_t_acc[:2, -1]
+        point_xy = self.delta_t_acc[:2, :2] @ point_xy + self.delta_t_acc[:2, -1]
         pose[0, -1] = point_xy[0]
         pose[1, -1] = point_xy[1]
         self.pose_segment.append(pose)
-        
+        message=-1
         if len(self.pose_segment) == self.pose_segment_size:
-            self.align_pose()
+            message=self.align_pose()
             self.pose_segment.pop(0)
         
-        return self.pose_segment[-1]
+        return self.pose_segment[-1], message
 
 
 

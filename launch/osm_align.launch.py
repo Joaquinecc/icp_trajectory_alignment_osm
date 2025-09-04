@@ -26,9 +26,9 @@ def generate_launch_description():
     - min_distance_threshold: Minimum trajectory distance for alignment (default: 10.0)
     - odom_topic: Input odometry topic name (default: '/liodom/odom')
     - save_resuts_path: Directory to save results (poses.txt, runtime.txt). If empty, results are not saved.
-    
-    Example usage:
-    ros2 launch osm_align osm_align.launch.py frame_id:=02 pose_segment_size:=100
+    - viz_marker_topic: Topic to publish lanelet markers (default: '/osm_align/lanelet_markers')
+    - viz_frame: Frame for visualization markers (default: 'odom')
+    - viz_line_width: Marker line width (default: 0.2)
     """
     
     # Declare launch arguments with default values
@@ -91,6 +91,23 @@ def generate_launch_description():
         default_value='/home/joaquinecc/Documents/ros_projects/results/osm_aligned/temp/',
         description='Directory to save results (poses.txt, runtime.txt). If empty, results are not saved.'
     )
+
+    # Viz arguments
+    declare_viz_marker_topic = DeclareLaunchArgument(
+        'viz_marker_topic',
+        default_value='/osm_align/lanelet_markers',
+        description='Topic to publish lanelet markers'
+    )
+    declare_viz_frame = DeclareLaunchArgument(
+        'viz_frame',
+        default_value='odom',
+        description='Frame for visualization markers'
+    )
+    declare_viz_line_width = DeclareLaunchArgument(
+        'viz_line_width',
+        default_value='0.2',
+        description='Line width for visualization markers'
+    )
     
     # Create the node with parameters
     osm_align_node = Node(
@@ -116,6 +133,21 @@ def generate_launch_description():
             ('/liodom/odom', LaunchConfiguration('odom_topic'))
         ]
     )
+
+    viz_map_node = Node(
+        package='osm_align',
+        executable='viz_map_node',
+        name='viz_map_node',
+        output='screen',
+        parameters=[{
+            'frame_id': ParameterValue(LaunchConfiguration('frame_id'), value_type=str),
+            'map_lanelet_path': LaunchConfiguration('map_lanelet_path'),
+            'marker_topic': LaunchConfiguration('viz_marker_topic'),
+            'line_width': LaunchConfiguration('viz_line_width'),
+            # 'frame': LaunchConfiguration('viz_frame'),
+            'use_sim_time': True,
+        }]
+    )
     
     return LaunchDescription([
         declare_frame_id,
@@ -128,5 +160,9 @@ def generate_launch_description():
         declare_min_distance_threshold,
         declare_odom_topic,
         declare_save_resuts_path,
-        osm_align_node
+        declare_viz_marker_topic,
+        declare_viz_frame,
+        declare_viz_line_width,
+        osm_align_node,
+        viz_map_node,
     ]) 
