@@ -299,10 +299,20 @@ class KittiOdometryCorrection(Node):
         #move to velodyne frame
         transformed_pose = self.base_to_velo@self._pose_to_4x4(msg.pose.pose)
         t0 = time.perf_counter()
-        pose_corrected=self.trajectory_correction.apply(transformed_pose)
+        pose_corrected, message=self.trajectory_correction.apply(transformed_pose)
         dt = time.perf_counter() - t0
 
-        self.get_logger().info(f"frame {self.frame_count} align runtime: {dt}")
+        # self.get_logger().info(f"frame {self.frame_count} align runtime: {dt}")
+
+        if message==0:
+            self.get_logger().info(f"frame {self.frame_count} trajectory length < {self.min_distance_threshold}, skip ICP")
+        elif message==1:
+            self.get_logger().info(f"frame {self.frame_count} ICP error > {self.icp_error_threshold}, skip ICP")
+        elif message==-1:
+            pass
+        else:
+            self.get_logger().info(f"frame {self.frame_count} ICP error < {message}, ICP success")
+
         self.align_runtimes.append(dt)
         self.frame_count += 1
         self.poses_history.append(pose_corrected)
@@ -324,7 +334,7 @@ class KittiOdometryCorrection(Node):
     def get_transform_matrix_from_tf(
         self, 
         source_frame: str = "base_link", 
-        target_frame: str = "velodyne", 
+        target_frame: str = "velo_link", 
         timeout_sec: float = 2.0
     ) -> Tuple[np.ndarray, bool]:
         """
@@ -363,7 +373,7 @@ class KittiOdometryCorrection(Node):
         Notes
         -----
         The function converts ROS TransformStamped messages to homogeneous
-        matrices for use in geometric computations. Handles quaternion to
+        matrices for use in geomesstric computations. Handles quaternion to
         rotation matrix conversion using scipy's Rotation class.
         """
         try:
