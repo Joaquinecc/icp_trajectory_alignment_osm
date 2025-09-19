@@ -1,7 +1,30 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
 from typing import List, Tuple, Union, Optional
-# from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Pose
+
+
+def pose_to_4x4(pose: Pose) -> np.ndarray:
+    """
+    Convert geometry_msgs/Pose to a 4x4 homogeneous transformation matrix.
+
+    Parameters
+    ----------
+    pose : geometry_msgs.msg.Pose
+        Input pose with position and orientation (quaternion).
+
+    Returns
+    -------
+    numpy.ndarray
+        A 4x4 homogeneous matrix in row-major layout.
+    """
+    quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
+    R3 = Rotation.from_quat(quat).as_matrix()
+    t = np.array([pose.position.x, pose.position.y, pose.position.z])
+    M = np.eye(4)
+    M[:3, :3] = R3
+    M[:3, 3] = t
+    return M
 
 def pose_to_homogenous_matrix(R: np.ndarray, T: np.ndarray) -> np.ndarray:
     """

@@ -241,27 +241,7 @@ class KittiOdometryCorrection(Node):
 
         self.get_logger().debug(f"frame {self.frame_count} pose: {pose.position.x}, {pose.position.y}, {pose.position.z}")
 
-    def _pose_to_4x4(self, pose: Pose) -> np.ndarray:
-        """
-        Convert geometry_msgs/Pose to a 4x4 homogeneous transformation matrix.
 
-        Parameters
-        ----------
-        pose : geometry_msgs.msg.Pose
-            Input pose with position and orientation (quaternion).
-
-        Returns
-        -------
-        numpy.ndarray
-            A 4x4 homogeneous matrix in row-major layout.
-        """
-        quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
-        R3 = Rotation.from_quat(quat).as_matrix()
-        t = np.array([pose.position.x, pose.position.y, pose.position.z])
-        M = np.eye(4)
-        M[:3, :3] = R3
-        M[:3, 3] = t
-        return M
 
     def save_results(self) -> None:
         """Save pose history and alignment runtimes if path is provided."""
@@ -297,7 +277,7 @@ class KittiOdometryCorrection(Node):
             Incoming odometry message.
         """
         #move to velodyne frame
-        transformed_pose = self.base_to_velo@self._pose_to_4x4(msg.pose.pose)
+        transformed_pose = self.base_to_velo@utils.pose_to_4x4(msg.pose.pose)
         t0 = time.perf_counter()
         pose_corrected, message=self.trajectory_correction.apply(transformed_pose)
         dt = time.perf_counter() - t0

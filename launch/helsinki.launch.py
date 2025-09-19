@@ -23,6 +23,61 @@ def generate_launch_description():
         description='Path to bag file'
     )
 
+    declare_odom_topic = DeclareLaunchArgument(
+        'odom_topic',
+        default_value='/liodom/odom',
+        description='Odom topic'
+    )
+    declare_pose_segment_size = DeclareLaunchArgument(
+        'pose_segment_size',
+        default_value='100',
+        description='Pose segment size'
+    )
+    declare_knn_neighbors = DeclareLaunchArgument(
+        'knn_neighbors',
+        default_value='10',
+        description='KNN neighbors'
+    )
+    declare_valid_correspondence_threshold = DeclareLaunchArgument(
+        'valid_correspondence_threshold',
+        default_value='0.9',
+        description='Valid correspondence threshold'
+    )
+    declare_icp_error_threshold = DeclareLaunchArgument(
+        'icp_error_threshold',
+        default_value='2.0',
+        description='ICP error threshold'
+    )
+    declare_trimming_ratio = DeclareLaunchArgument(
+        'trimming_ratio',   
+        default_value='0.2',
+        description='Trimming ratio'
+    )
+    declare_min_distance_threshold = DeclareLaunchArgument(
+        'min_distance_threshold',
+        default_value='10.0',
+        description='Min distance threshold'
+    )
+
+    helsinki_node = Node(
+        package='osm_align',
+        executable='helsinki_node',
+        name='helsinki_node',
+        output='screen',
+        parameters=[{
+            'map_lanelet_path': LaunchConfiguration('map_lanelet_path'),
+            'pose_segment_size': LaunchConfiguration('pose_segment_size'),
+            'knn_neighbors': LaunchConfiguration('knn_neighbors'),
+            'valid_correspondence_threshold': LaunchConfiguration('valid_correspondence_threshold'),
+            'icp_error_threshold': LaunchConfiguration('icp_error_threshold'),
+            'trimming_ratio': LaunchConfiguration('trimming_ratio'),
+            'min_distance_threshold': LaunchConfiguration('min_distance_threshold'),
+            'odom_topic': LaunchConfiguration('odom_topic'),
+        }],
+    )
+    
+
+
     liodom_launch = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(
             os.path.join(
@@ -34,18 +89,10 @@ def generate_launch_description():
         launch_arguments={
             'viz': 'false',
             'mapping': 'true',
-            'use_imu': 'false',
+            'use_imu': 'true',
         }.items()
     )
-    helsinki_node = Node(
-        package='osm_align',
-        executable='helsinki_node',
-        name='helsinki_node',
-        output='screen',
-        parameters=[{
-            'map_lanelet_path': LaunchConfiguration('map_lanelet_path'),
-        }],
-    )
+
 
         # rviz2 node
     rviz2 = Node(
@@ -57,14 +104,21 @@ def generate_launch_description():
     )
 
     play_ros_bag = ExecuteProcess(
-        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_file'), '--delay', '5', '--rate', '0.8'],
+        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_file'), '--delay', '5', '--rate', '1.0'],
         output='screen'
     )
     return LaunchDescription([
         declare_map_lanelet_path,
-        declare_bag_file,
-        liodom_launch,
+        declare_odom_topic,
+        declare_pose_segment_size,
+        declare_knn_neighbors,
+        declare_valid_correspondence_threshold,
+        declare_icp_error_threshold,
+        declare_trimming_ratio,
+        declare_min_distance_threshold,
         helsinki_node,
+
+        liodom_launch,
         rviz2,
         play_ros_bag,
     ])
