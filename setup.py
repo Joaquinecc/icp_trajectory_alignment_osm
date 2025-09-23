@@ -31,9 +31,10 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'kitti_odometry = osm_align.kitti_odometry:main',
+            'kitti_node = osm_align.kitti_node:main',
             'helsinki_node = osm_align.helsinki_node:main',
             'viz_map_node = osm_align.viz_map_node:main',
+            'map_osm_viz = osm_align.map_osm_viz:main',
         ],
     },
 )

@@ -2,6 +2,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from typing import List, Tuple, Union, Optional
 from geometry_msgs.msg import Pose
+import numpy as np
 
 
 def pose_to_4x4(pose: Pose) -> np.ndarray:

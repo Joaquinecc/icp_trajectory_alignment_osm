@@ -93,8 +93,7 @@ def generate_launch_description():
         }.items()
     )
 
-
-        # rviz2 node
+    # rviz2 node
     rviz2 = Node(
         package='rviz2',
         executable='rviz2',
@@ -104,9 +103,15 @@ def generate_launch_description():
     )
 
     play_ros_bag = ExecuteProcess(
-        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_file'), '--delay', '5', '--rate', '1.0'],
+        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_file'), '--delay', '3', '--rate', '1.0'],
         output='screen'
     )
+
+    bridge_socket = ExecuteProcess(
+        cmd=['ros2', 'launch', 'rosbridge_server', 'rosbridge_websocket_launch.xml'],
+        output='screen'
+    )
+
     return LaunchDescription([
         declare_map_lanelet_path,
         declare_odom_topic,
@@ -117,7 +122,7 @@ def generate_launch_description():
         declare_trimming_ratio,
         declare_min_distance_threshold,
         helsinki_node,
-
+        bridge_socket,
         liodom_launch,
         rviz2,
         play_ros_bag,

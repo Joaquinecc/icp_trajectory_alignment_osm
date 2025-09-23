@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+import os
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch.launch_description_sources import AnyLaunchDescriptionSource
+from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
@@ -43,16 +46,21 @@ def generate_launch_description():
         default_value='',
         description='Path to OSM lanelet file (empty = auto-construct from frame_id)'
     )
+    declare_bag_path = DeclareLaunchArgument(
+        'bag_path',
+        default_value='',
+        description='Path to KITTI bag file'
+    )
     
     declare_pose_segment_size = DeclareLaunchArgument(
         'pose_segment_size', 
-        default_value='150',
+        default_value='100',
         description='Number of poses to maintain in sliding window buffer'
     )
     
     declare_knn_neighbors = DeclareLaunchArgument(
         'knn_neighbors',
-        default_value='20', 
+        default_value='10', 
         description='Number of nearest neighbors for KD-tree spatial queries'
     )
     
@@ -64,13 +72,13 @@ def generate_launch_description():
     
     declare_icp_error_threshold = DeclareLaunchArgument(
         'icp_error_threshold',
-        default_value='2.0',
+        default_value='1.0',
         description='Maximum acceptable ICP alignment error threshold'
     )
     
     declare_trimming_ratio = DeclareLaunchArgument(
         'trimming_ratio',
-        default_value='0.2',
+        default_value='0.4',
         description='Trimming ratio for robust ICP algorithm'
     )
     
@@ -88,7 +96,7 @@ def generate_launch_description():
     
     declare_save_resuts_path = DeclareLaunchArgument(
         'save_resuts_path',
-        default_value='/home/joaquinecc/Documents/ros_projects/results/osm_aligned/temp/',
+        default_value='~/temp/',
         description='Directory to save results (poses.txt, runtime.txt). If empty, results are not saved.'
     )
 
@@ -112,7 +120,7 @@ def generate_launch_description():
     # Create the node with parameters
     osm_align_node = Node(
         package='osm_align',
-        executable='kitti_odometry',
+        executable='kitti_node',
         name='osm_align_node',
         output='screen',
         parameters=[{
@@ -134,22 +142,54 @@ def generate_launch_description():
         ]
     )
 
-    viz_map_node = Node(
-        package='osm_align',
-        executable='viz_map_node',
-        name='viz_map_node',
+    liodom_launch = IncludeLaunchDescription(
+        AnyLaunchDescriptionSource(
+            [
+                os.path.join(
+                    get_package_share_directory("liodom"),
+                    "launch",
+                    "liodom_launch.xml",    
+                )
+            ]
+        ),
+        launch_arguments={'viz': 'false', 'mapping': 'false', 'use_imu': 'false'}.items()
+    )
+
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz_node',
         output='screen',
-        parameters=[{
-            'frame_id': ParameterValue(LaunchConfiguration('frame_id'), value_type=str),
-            'map_lanelet_path': LaunchConfiguration('map_lanelet_path'),
-            'marker_topic': LaunchConfiguration('viz_marker_topic'),
-            'line_width': LaunchConfiguration('viz_line_width'),
-            # 'frame': LaunchConfiguration('viz_frame'),
-            'use_sim_time': True,
-        }]
+        parameters=[{'config': '${find:osm_align}/rviz/kitti.rviz'}]
     )
     
-    return LaunchDescription([
+    kitti_bag_node = ExecuteProcess(
+        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_path'),
+             '--clock',
+             '--delay', '1.5',
+             '--wait-for-all-acked', '0',
+             '--rate', '1.0',
+            #  '--qos-profile-overrides-path', '${find:kitti_to_ros2bag}/config/qos_override.yaml'
+             ],
+        # output='screen'
+    )
+    osm_map_viz_node = Node(
+        package='osm_align',
+        executable='map_osm_viz',
+        name='osm_map_viz_node',
+        output='screen',
+        parameters=[{"gps_topic":"/kitti/oxts/gps",
+                    'odom_topic1':"/kitti/gtruth/odom",
+                     'odom_topic2':"/liodom/odom",
+                     'odom_topic3':"/osm_align/odom_aligned"}]
+    )
+
+    rosbridge_node = ExecuteProcess(
+        cmd=['ros2', 'launch', 'rosbridge_server', 'rosbridge_websocket_launch.xml'],
+        output='screen'
+    )
+
+    return LaunchDescription([  
         declare_frame_id,
         declare_map_lanelet_path,
         declare_pose_segment_size,
@@ -164,5 +204,9 @@ def generate_launch_description():
         declare_viz_frame,
         declare_viz_line_width,
         osm_align_node,
-        viz_map_node,
+        liodom_launch,    
+        osm_map_viz_node,
+        rosbridge_node,
+        rviz_node,
+        kitti_bag_node,
     ]) 

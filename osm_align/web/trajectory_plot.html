@@ -1,0 +1,165 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Car on OSM</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    html,body,#map{height:100%;margin:0}
+    .controls {
+      position: absolute; z-index: 1000; top: 8px; left: 8px;
+      background: rgba(255,255,255,.9); border-radius: 8px; padding: 6px 8px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.2); font: 14px/1.2 system-ui, sans-serif;
+    }
+    .controls button { margin-right: 6px; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div class="controls">
+  <button id="toggleFollow">Stop follow</button>
+  <button id="clearTrail">Clear trail</button>
+  <span id="ptsCount" title="number of points in trail">0 pts</span>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/roslib/build/roslib.min.js"></script>
+<script>
+  // Connect to rosbridge on localhost:9090 (change host if needed)
+  const ros = new ROSLIB.Ros({ url: 'ws://localhost:9090' });
+
+  // Leaflet map
+  const map = L.map('map').setView([0,0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:19,
+    attribution:'&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  // Live position marker
+  const carIcon = L.circleMarker([0,0], { radius: 6 }).addTo(map);
+
+  // Trajectory polyline
+  const path1 = L.polyline([], { weight: 3, opacity: 0.9,color:'green'}).addTo(map);
+  const trail1 = [];                  // array of [lat, lon]
+  const MAX_POINTS = 5000;           // cap to prevent unbounded growth
+  const MIN_DIST_M = 0.5;            // only append if moved > 0.5 m (optional smoothing)
+  const path2 = L.polyline([], { weight: 3, opacity: 0.9, color: 'red' }).addTo(map);
+  const trail2 = [];
+  const path3 = L.polyline([], { weight: 3, opacity: 0.9, color: 'blue' }).addTo(map);
+  const trail3 = [];
+
+  // Simple Haversine distance in meters
+  function distMeters(a, b) {
+    const toRad = d => d * Math.PI / 180;
+    const R = 6371000;
+    const dLat = toRad(b[0] - a[0]);
+    const dLon = toRad(b[1] - a[1]);
+    const lat1 = toRad(a[0]), lat2 = toRad(b[0]);
+    const s = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  }
+
+  let first = true;
+  let follow = true;
+
+  // Controls
+  const btnFollow = document.getElementById('toggleFollow');
+  const btnClear  = document.getElementById('clearTrail');
+  const ptsCount  = document.getElementById('ptsCount');
+
+  btnFollow.onclick = () => {
+    follow = !follow;
+    btnFollow.textContent = follow ? 'Stop follow' : 'Start follow';
+  };
+  btnClear.onclick = () => {
+    trail1.length = 0;
+    path1.setLatLngs(trail1);
+    trail2.length = 0;
+    path2.setLatLngs(trail2);
+    trail3.length = 0;
+    path3.setLatLngs(trail3);
+    ptsCount.textContent = '0 pts';
+  };
+
+  // Stop following if user drags; double-click to re-enable follow
+  map.on('dragstart', () => { follow = false; btnFollow.textContent = 'Start follow'; });
+  map.on('dblclick', () => { follow = true; btnFollow.textContent = 'Stop follow'; });
+
+  // Subscribe to GeoJSON topic (coords in [lon, lat] order)
+  const carTopic1 = new ROSLIB.Topic({
+    ros, name: '/osm_align/map/odom_gps1', messageType: 'std_msgs/String'
+  });
+  const carTopic2 = new ROSLIB.Topic({
+    ros, name: '/osm_align/map/odom_gps2', messageType: 'std_msgs/String'
+  });
+  const carTopic3 = new ROSLIB.Topic({
+    ros, name: '/osm_align/map/odom_gps3', messageType: 'std_msgs/String'
+  });
+  carTopic1.subscribe(msg => {
+    try {
+      const f = JSON.parse(msg.data);
+      const [lon, lat] = f.geometry.coordinates;   // GeoJSON: [lon, lat]
+      const ll = [lat, lon];
+
+      // Update live marker
+      carIcon.setLatLng(ll);
+
+      // Initialize view
+      if (first) { map.setView(ll, 20); first = false; }
+
+      // Append to trail if moved enough or first point
+      const last = trail1[trail1.length - 1];
+      if (!last || distMeters(last, ll) >= MIN_DIST_M) {
+        trail1.push(ll);
+        if (trail1.length > MAX_POINTS) trail1.shift(); // keep it bounded
+        path1.setLatLngs(trail1);
+        ptsCount.textContent = `${trail1.length} pts`;
+      }
+
+      // Follow mode pans to keep marker centered-ish
+      if (follow) {
+        map.setView(ll, map.getZoom()); // or map.panTo(ll) for softer movement
+      }
+      console.error('Updated trail1 topic1');
+    } catch (e) {
+      console.error('Bad message payload:', e);
+    }
+  });
+
+  carTopic2.subscribe(msg => {
+    try {
+      const f = JSON.parse(msg.data);
+      const [lon, lat] = f.geometry.coordinates;   // GeoJSON: [lon, lat]
+      const ll = [lat, lon];
+
+      const last = trail2[trail2.length - 1];
+      if (!last || distMeters(last, ll) >= MIN_DIST_M) {
+        trail2.push(ll);
+        if (trail2.length > MAX_POINTS) trail2.shift();
+        path2.setLatLngs(trail2);
+      }
+      console.error('Updated trail2 topic2');
+    } catch (e) {
+      console.error('Bad message payload (gps2):', e);
+    }
+  });
+  carTopic3.subscribe(msg => {
+    try {
+      const f = JSON.parse(msg.data);
+      const [lon, lat] = f.geometry.coordinates;   // GeoJSON: [lon, lat]
+      const ll = [lat, lon];
+
+      const last = trail3[trail3.length - 1];
+      if (!last || distMeters(last, ll) >= MIN_DIST_M) {
+        trail3.push(ll);
+        if (trail3.length > MAX_POINTS) trail3.shift();
+        path3.setLatLngs(trail3);
+      }
+      console.error('Updated trail3 topic3');
+    } catch (e) {
+      console.error('Bad message payload (gps3):', e);
+    }
+  });
+</script>
+</body>
+</html>

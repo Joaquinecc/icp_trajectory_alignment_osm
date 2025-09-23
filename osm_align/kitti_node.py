@@ -9,12 +9,18 @@ import os
 import lanelet2
 from scipy.spatial.transform import Rotation
 from scipy.spatial import cKDTree
-from tf2_ros import Buffer, TransformListener
+from tf2_ros import Buffer, TransformListener, StaticTransformBroadcaster
 import osm_align.utils.utils as utils
 from osm_align.utils.kitti_utils import angle_dict, cordinta_dict
 from scipy.linalg import inv
 import time
 from osm_align.odometry_correction import OdomCorrector
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Point
+from rclpy.duration import Duration
+from rclpy.qos import QoSProfile, QoSHistoryPolicy, QoSDurabilityPolicy, ReliabilityPolicy
+from geometry_msgs.msg import TransformStamped
+
 # Configuration parameters are now declared as ROS parameters in the node
 
 BASE_FRAME="base_link"
@@ -59,7 +65,7 @@ class KittiOdometryCorrection(Node):
         
         # Get parameters
         self.frame_id: str = self.get_parameter('frame_id').get_parameter_value().string_value
-        # self.map_lanelet_path: str = self.get_parameter('map_lanelet_path').get_parameter_value().string_value
+        self.map_lanelet_path: str = self.get_parameter('map_lanelet_path').get_parameter_value().string_value
         self.pose_segment_size: int = self.get_parameter('pose_segment_size').get_parameter_value().integer_value
         self.knn_neighbors: int = self.get_parameter('knn_neighbors').get_parameter_value().integer_value
         self.valid_correspondence_threshold: float = self.get_parameter('valid_correspondence_threshold').get_parameter_value().double_value
@@ -69,7 +75,6 @@ class KittiOdometryCorrection(Node):
         self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.save_resuts_path: str = self.get_parameter('save_resuts_path').get_parameter_value().string_value
 
-        self.map_lanelet_path: str = f'/home/joaquinecc/Documents/dataset/kitti/dataset/map/{self.frame_id}/lanelet2_seq_{self.frame_id}.osm'
             
         # Always use frame_id to get origin coordinates and angle correction from dictionaries
         self.origin_coords_lanelet: List[float] = [cordinta_dict[self.frame_id]['origin_lat'], cordinta_dict[self.frame_id]['origin_lon']]
@@ -129,10 +134,58 @@ class KittiOdometryCorrection(Node):
         self.base_to_velo, _ = self.get_transform_matrix_from_tf(
             source_frame=BASE_FRAME, 
             target_frame=SENSOR_FRAME, 
-            timeout_sec=5
+            timeout_sec=2
         )
+        qos = QoSProfile(
+            depth=1,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+        self.map_pub = self.create_publisher(MarkerArray, '/osm_align/lanelet_markers', qos)
+        self._publish_markers()
 
-        self.get_logger().debug(f"Base to Velodyne transform matrix (from rclpy):\n{self.base_to_velo}")
+        self.get_logger().info(f"Base to Velodyne transform matrix (from rclpy):\n{self.base_to_velo}")
+
+        self._publish_tf_map_utm()
+
+    def _publish_tf_map_utm(self) -> None:
+        """
+        Publish the transformation matrix from the map frame to the UTM frame.
+        """
+        self.broadcaster = StaticTransformBroadcaster(self)
+
+
+        tf_odom_to_utm= np.identity(4)
+        rotation_angle = np.radians(-self.angle_lanelet_correction)
+
+        tf_odom_to_utm[:2,:2] = np.array([
+            [np.cos(rotation_angle), -np.sin(rotation_angle)],
+            [np.sin(rotation_angle),  np.cos(rotation_angle)],
+        ])
+
+    
+        tf_odom_to_utm =  tf_odom_to_utm@ self.base_to_velo 
+        
+        static_transform = TransformStamped()
+        static_transform.header.stamp = self.get_clock().now().to_msg()
+        static_transform.header.frame_id = 'utm'     # parent frame
+        static_transform.child_frame_id = 'odom'  # child frame
+
+        static_transform.transform.translation.x = tf_odom_to_utm[0, 3]
+        static_transform.transform.translation.y = tf_odom_to_utm[1, 3]
+        static_transform.transform.translation.z = tf_odom_to_utm[2, 3]
+
+        rotation_matrix = tf_odom_to_utm[:3, :3]
+        rotation = Rotation.from_matrix(rotation_matrix)
+        quaternion = rotation.as_quat()
+        static_transform.transform.rotation.x = quaternion[0]
+        static_transform.transform.rotation.y = quaternion[1]
+        static_transform.transform.rotation.z = quaternion[2]
+        static_transform.transform.rotation.w = quaternion[3]
+
+        self.broadcaster.sendTransform(static_transform)
+
 
     def _load_lanelet_map(self) -> None:
         """
@@ -240,6 +293,62 @@ class KittiOdometryCorrection(Node):
         self.publisher_odom.publish(odom_msg)
 
         self.get_logger().debug(f"frame {self.frame_count} pose: {pose.position.x}, {pose.position.y}, {pose.position.z}")
+
+    def _extract_centerlines(self) -> List[np.ndarray]:
+        rotation_angle = np.radians(self.angle_lanelet_correction)
+        R_M = np.array([
+            [np.cos(rotation_angle), -np.sin(rotation_angle)],
+            [np.sin(rotation_angle),  np.cos(rotation_angle)],
+        ])
+
+        # rotation_matrix = self.tf_to_map.transform.rotation
+        # rotation_matrix = Rotation.from_quat([rotation_matrix.x, rotation_matrix.y, rotation_matrix.z, rotation_matrix.w])
+        # rotation_matrix = rotation_matrix.as_matrix()[:2, :2]
+        # R_M = rotation_matrix @ R_M
+
+        centerlines: List[np.ndarray] = []
+        for lanelet in self.lanelet_map.laneletLayer:
+            prev_point: Optional[np.ndarray] = None
+            points_xy: List[np.ndarray] = []
+            for pt in lanelet.centerline:
+                xy = R_M @ np.array([pt.x, pt.y])
+                if prev_point is not None:
+                    if np.linalg.norm(xy - prev_point) < 1.0:
+                        continue
+                prev_point = xy
+                points_xy.append(xy)
+            if len(points_xy) >= 2:
+                centerlines.append(np.array(points_xy))
+        self.get_logger().info(f"Extracted {len(centerlines)} centerline polylines")
+        return centerlines
+
+
+    def _publish_markers(self) -> None:
+        centerlines = self._extract_centerlines()
+        markers = MarkerArray()
+        for idx, line in enumerate(centerlines):
+            marker = Marker()
+            marker.header.frame_id = "velo_link"
+            marker.header.stamp.sec = 0
+            marker.header.stamp.nanosec = 0
+            # marker.header.stamp = self.get_clock().now().to_msg()
+            marker.ns = 'lanelet_centerlines'
+            marker.id = idx
+            marker.type = Marker.LINE_STRIP
+            marker.action = Marker.ADD
+            marker.pose.orientation.w = 1.0
+            marker.scale.x = float(0.2)
+            marker.color.r = float(188.0 / 255.0)
+            marker.color.g = float(203.0 / 255.0)
+            marker.color.b = float(169.0 / 255.0)
+            marker.color.a = float(1.0)
+            # Convert to geometry_msgs/Point list, z=0
+            marker.points = [Point(x=float(p[0]), y=float(p[1]), z=0.0) for p in line]
+            # Infinite lifetime; with transient local, late subscribers will receive
+            marker.lifetime = Duration(seconds=0).to_msg()
+            markers.markers.append(marker)
+
+        self.map_pub.publish(markers)
 
 
 

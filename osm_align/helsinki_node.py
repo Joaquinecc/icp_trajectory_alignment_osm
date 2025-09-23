@@ -9,14 +9,17 @@ from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 #Lanelet2
 import lanelet2
-from lanelet2.core import GPSPoint
+from lanelet2.core import GPSPoint, BasicPoint3d
 from osm_align import OdomCorrector
-
+from sensor_msgs.msg import NavSatFix, NavSatStatus
 from scipy.spatial.transform import Rotation
 import numpy as np
 from typing import List, Optional
 from scipy.spatial import cKDTree
 from osm_align.utils import utils
+import json
+from std_msgs.msg import String
+
 
 
 
@@ -52,7 +55,7 @@ class HelsinkiNode(Node):
         self.frame_count = 0
         self.poses_history = []
 
-        #Odom Correction Parameters
+        # Odom Correction Parameters
         self.pose_segment_size: int = self.get_parameter('pose_segment_size').get_parameter_value().integer_value
         self.knn_neighbors: int = self.get_parameter('knn_neighbors').get_parameter_value().integer_value
         self.valid_correspondence_threshold: float = self.get_parameter('valid_correspondence_threshold').get_parameter_value().double_value
@@ -60,6 +63,16 @@ class HelsinkiNode(Node):
         self.trimming_ratio: float = self.get_parameter('trimming_ratio').get_parameter_value().double_value
         self.min_distance_threshold: float = self.get_parameter('min_distance_threshold').get_parameter_value().double_value
         self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
+
+        # Log info: print odom_topic and map_lanelet_path
+        self.get_logger().info(f"odom_topic: {self.odom_topic}")
+        self.get_logger().info(f"map_lanelet_path: {self.map_lanelet_path}")
+        self.get_logger().info(f"pose_segment_size: {self.pose_segment_size}")
+        self.get_logger().info(f"knn_neighbors: {self.knn_neighbors}")
+        self.get_logger().info(f"valid_correspondence_threshold: {self.valid_correspondence_threshold}")
+        self.get_logger().info(f"icp_error_threshold: {self.icp_error_threshold}")
+        self.get_logger().info(f"trimming_ratio: {self.trimming_ratio}")
+        self.get_logger().info(f"min_distance_threshold: {self.min_distance_threshold}")
 
         #Map settings
         self.line_width= 0.2
@@ -103,6 +116,10 @@ class HelsinkiNode(Node):
         )
         self.publisher_odom=self.create_publisher(Odometry, '/osm_align/odom_aligned', 10) 
     
+
+        self.navsat_pub = self.create_publisher(NavSatFix, '/osm_align/car_wgs84', 10)
+        self.geojson_pub = self.create_publisher(String, '/osm_align/car_geojson', 10)
+
     def odom_callback(self, msg: Odometry) -> None:  
         pose_corrected, message=self.trajectory_correction.apply(utils.pose_to_4x4(msg.pose.pose))
         if message==0:
@@ -127,8 +144,34 @@ class HelsinkiNode(Node):
         pose_recived.orientation.z=pose_corrected[2, 0]
         pose_recived.orientation.w=pose_corrected[3, 0]
         self.publish_odom(pose_recived)
+        self.publish_corrected_gps(pose_recived)
 
- 
+    def publish_corrected_gps(self, pose) -> None:
+        x = pose.position.x
+        y = pose.position.y
+        gp = self._utm_projector.reverse(BasicPoint3d(x, y, 0.0))   
+
+        # Publish NavSatFix (simple)
+        fix = NavSatFix()
+        fix.header = self.get_clock().now().to_msg()
+        fix.status.status = NavSatStatus.STATUS_FIX
+        fix.status.service = 1  # GPS
+        fix.latitude = float(gp.lat)
+        fix.longitude = float(gp.lon)
+        fix.altitude = 0
+        # self.navsat_pub.publish(fix)
+
+        # Publish small GeoJSON (Point)
+        feature = {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [gp.lon, gp.lat]},
+            "properties": {"stamp": self.get_clock().now().to_msg().sec}
+        }
+
+        msg_str=String()
+        msg_str.data=json.dumps(feature)
+        self.geojson_pub.publish(msg_str)
+
     def publish_odom(self, pose) -> None:
         """
         Publish the aligned odometry message.
