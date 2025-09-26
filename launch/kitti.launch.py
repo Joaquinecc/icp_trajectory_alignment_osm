@@ -152,7 +152,7 @@ def generate_launch_description():
                 )
             ]
         ),
-        launch_arguments={'viz': 'false', 'mapping': 'false', 'use_imu': 'false'}.items()
+        launch_arguments={'viz': 'false', 'mapping': 'false', 'use_imu': 'true'}.items()
     )
 
     rviz_node = Node(
@@ -207,6 +207,6 @@ def generate_launch_description():
         liodom_launch,    
         osm_map_viz_node,
         rosbridge_node,
-        rviz_node,
+        # rviz_node,
         kitti_bag_node,
     ]) 

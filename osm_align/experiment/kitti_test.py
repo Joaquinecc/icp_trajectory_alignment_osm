@@ -86,7 +86,7 @@ class Odomcorrection():
         )
         
         self.liodom_path_pose = f"/home/joaquinecc/Documents/ros_projects/results/liodom/{frame_id}/poses.txt"
-        self.liodom_poses = get_pose(self.liodom_path_pose)
+        self.liodom_poses = get_pose(self.liodom_path_pose) #Velodyne frame
         
         start_time = time.time()
         self.run_process()
@@ -109,14 +109,13 @@ class Odomcorrection():
 
     def calculate_ape_rpe(self):
         gt_path_pose = f'/home/joaquinecc/Documents/dataset/kitti/dataset/poses/{self.frame_id}.txt'
-        R_kitti = np.array([
+        tf_base_to_velo = np.eye(4)
+        tf_base_to_velo[:3, :3] = np.array([
             [0,  0, 1],
             [-1, 0, 0],
             [0, -1, 0]
         ])
-        T_kitti = np.eye(4)
-        T_kitti[:3, :3] = R_kitti
-        gt_poses = T_kitti @ get_pose(gt_path_pose)
+        gt_poses = T_kitti @ get_pose(gt_path_pose) #Velodyne frame
         traj_GT = PosePath3D(poses_se3=gt_poses)
         traj_est = PosePath3D(poses_se3=self.pose_history)
         
