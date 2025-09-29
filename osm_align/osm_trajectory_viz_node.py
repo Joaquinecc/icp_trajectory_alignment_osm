@@ -42,15 +42,6 @@ class MapOsmViz(Node):
             self.gps_callback,
             10
         )
-
-        # rotation_angle=np.radians(59.0)
-        # self.tf_to_utm= np.identity(3)
-        # self.tf_to_utm[:2,:2] = np.array([
-        #     [np.cos(rotation_angle), -np.sin(rotation_angle)],
-        #     [np.sin(rotation_angle),  np.cos(rotation_angle)],
-        # ])
-
-
                 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)

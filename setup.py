@@ -34,7 +34,7 @@ setup(
             'kitti_node = osm_align.kitti_node:main',
             'helsinki_node = osm_align.helsinki_node:main',
             'viz_map_node = osm_align.viz_map_node:main',
-            'map_osm_viz = osm_align.map_osm_viz:main',
+            'osm_trajectory_viz_node = osm_align.osm_trajectory_viz_node:main',
         ],
     },
 )

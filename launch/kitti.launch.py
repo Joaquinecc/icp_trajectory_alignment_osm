@@ -175,8 +175,8 @@ def generate_launch_description():
     )
     osm_map_viz_node = Node(
         package='osm_align',
-        executable='map_osm_viz',
-        name='osm_map_viz_node',
+        executable='osm_trajectory_viz_node',
+        name='osm_trajectory_viz_node',
         output='screen',
         parameters=[{"gps_topic":"/kitti/oxts/gps",
                     'odom_topic1':"/kitti/gtruth/odom",
