@@ -16,20 +16,17 @@ class MapOsmViz(Node):
     def __init__(self):
         super().__init__("map_osm_viz")
         self.get_logger().info("Map OSM Viz initialized")
-        self.declare_parameter('map_lanelet_path', '')
         self.declare_parameter('gps_topic', '')
         self.declare_parameter('odom_topic1', '')
         self.declare_parameter('odom_topic2', '')
         self.declare_parameter('odom_topic3', '')
  
 
-        self.map_lanelet_path: str = self.get_parameter('map_lanelet_path').get_parameter_value().string_value
         self.gps_topic: str = self.get_parameter('gps_topic').get_parameter_value().string_value
         self.odom_topic1: str = self.get_parameter('odom_topic1').get_parameter_value().string_value
         self.odom_topic2: str = self.get_parameter('odom_topic2').get_parameter_value().string_value
         self.odom_topic3: str = self.get_parameter('odom_topic3').get_parameter_value().string_value
 
-        self.get_logger().info(f"Map lanelet path: {self.map_lanelet_path}")
         self.get_logger().info(f"GPS topic: {self.gps_topic}")
         self.get_logger().info(f"Odom topic 1: {self.odom_topic1}")
         self.get_logger().info(f"Odom topic 2: {self.odom_topic2}")
