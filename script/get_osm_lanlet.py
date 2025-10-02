@@ -6,7 +6,7 @@ by converting all 'unclassified' highways to 'residential', and then converts th
 to Lanelet2 format using crdesigner.
 
 Usage:
-    python get_osm_lanlet.py --name <output_name> --folder_output <output_folder> [--bbox S W N E]
+    python get_osm_lanlet.py --name <output_name> --folder-output <output_folder> [--bbox S W N E]
 
 Arguments:
     --name            Name for the output files (required)
@@ -27,7 +27,6 @@ Requirements:
     - requests
     - crdesigner (must be installed and available in PATH)
 """
-
 import argparse
 import os
 import requests
@@ -54,7 +53,7 @@ def main():
     {bbox[0]},{bbox[1]},
     {bbox[2]},{bbox[3]}
     ];
-    way[highway];
+    [highway~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street)$"];
     (._;>;);
     out meta qt;
     """.strip()
