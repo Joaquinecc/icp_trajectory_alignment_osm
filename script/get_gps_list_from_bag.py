@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+This script extracts GPS coordinates from a rosbag2 and writes them to a GeoJSON file.
+It also prints the bounding box of the trajectory and the same expanded by a margin.
+"""
+
 import argparse
 import json
 import math
@@ -17,13 +22,47 @@ from rosidl_runtime_py.utilities import get_message
 
 
 def meters_to_deg_lat(meters: float) -> float:
-    """Approximate conversion from meters to degrees latitude."""
+    """
+    Approximate conversion from meters to degrees latitude.
+
+    Parameters
+    ----------
+    meters : float
+        Distance in meters.
+
+    Returns
+    -------
+    float
+        Distance in degrees.
+
+    Notes
+    -----
+    This is an approximation and may not be accurate for large distances.
+    """
     # 1 degree latitude ≈ 111,320 m (varies slightly with latitude; this is fine for ~100 m margin)
     return meters / 111320.0
 
 
 def meters_to_deg_lon(meters: float, lat_deg: float) -> float:
-    """Approximate conversion from meters to degrees longitude at a given latitude."""
+    """
+    Approximate conversion from meters to degrees longitude at a given latitude.
+
+    Parameters
+    ----------
+    meters : float
+        Distance in meters.
+    lat_deg : float
+        Latitude in degrees.
+
+    Returns
+    -------
+    float
+        Distance in degrees.
+
+    Notes
+    -----
+    This is an approximation and may not be accurate for large distances.
+    """
     # 1 degree longitude ≈ 111,320 * cos(latitude) m
     return meters / (111320.0 * max(1e-12, math.cos(math.radians(lat_deg))))
 
@@ -36,6 +75,20 @@ def read_insdata_coords_from_bag(
     """
     Read a rosbag2 and extract (lon, lat) tuples from InsData.llh (x=lat, y=lon).
     Returns coordinates in GeoJSON order [lon, lat].
+
+    Parameters
+    ----------
+    bag_path : str
+        Path to the rosbag2.
+    topic_name : str
+        Name of the topic to read from the rosbag2.
+    expected_ros_type : str, optional
+        Expected ROS type of the topic.
+
+    Returns
+    -------
+    coords : List[Tuple[float, float]]
+        List of (lon, lat) tuples.
     """
     if not os.path.exists(bag_path):
         raise FileNotFoundError(f"Bag path not found: {bag_path}")
@@ -91,7 +144,20 @@ def read_insdata_coords_from_bag(
 
 
 def write_geojson_line(coords_lon_lat: List[Tuple[float, float]], out_path: str) -> None:
-    """Write a GeoJSON LineString from a list of (lon, lat)."""
+    """
+    Write a GeoJSON LineString from a list of (lon, lat).
+
+    Parameters
+    ----------
+    coords_lon_lat : List[Tuple[float, float]]
+        List of (lon, lat) tuples.
+    out_path : str
+        Path to the output GeoJSON file.
+
+    Returns
+    -------
+    None
+    """
     geojson = {
         "type": "FeatureCollection",
         "features": [
@@ -115,7 +181,26 @@ def write_geojson_line(coords_lon_lat: List[Tuple[float, float]], out_path: str)
 
 
 def print_bbox_info(coords_lon_lat: List[Tuple[float, float]], margin_m: float = 100.0) -> None:
-    """Compute and print diagonal (min/max lat/lon) and the same expanded by margin_m on each side."""
+    """
+    Compute and print diagonal (min/max lat/lon) and the same expanded by margin_m on each side.
+    
+    Parameters
+    ----------
+    coords_lon_lat : List[Tuple[float, float]]
+        List of (lon, lat) tuples.
+    margin_m : float, optional
+        Margin in meters for expanded bounding box (default: 100).
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    The bounding box is printed in the format:
+    min_lat, min_lon, max_lat, max_lon
+
+    """
     lons = [c[0] for c in coords_lon_lat]
     lats = [c[1] for c in coords_lon_lat]
 
@@ -142,6 +227,8 @@ def print_bbox_info(coords_lon_lat: List[Tuple[float, float]], margin_m: float =
     print(f"\nBounding box (+/- {int(margin_m)} m on each side):")
     print(f"  min corner (lat, lon): [{min_lat_m:.12f}, {min_lon_m:.12f}]")
     print(f"  max corner (lat, lon): [{max_lat_m:.12f}, {max_lon_m:.12f}]")
+
+    print(f"Easy copy paste: {min_lat_m:.12f}, {min_lon_m:.12f}, {max_lat_m:.12f}, {max_lon_m:.12f}")
 
 
 def main():

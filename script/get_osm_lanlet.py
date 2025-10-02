@@ -38,7 +38,8 @@ def main():
     parser.add_argument("--name", required=True, help="Name for the output files")
     parser.add_argument("--folder-output", required=True, help="Output folder")
     parser.add_argument("--bbox", nargs=4, type=float, metavar=('S', 'W', 'N', 'E'),
-                        default=[60.17516814173081,24.94667968392664,60.18190733354793,24.962206629918228],
+                        default=[60.13271686171488, 24.821978584805642,
+                                 60.27175764979337, 25.061202762206708],
                         help="Bounding box: south west north east")
     args = parser.parse_args()
 
@@ -47,13 +48,14 @@ def main():
     bbox = args.bbox
 
     os.makedirs(folder_output, exist_ok=True)
-
+    #|service can be added to the query 
     query = f"""
     [timeout:180][out:xml][bbox:
     {bbox[0]},{bbox[1]},
     {bbox[2]},{bbox[3]}
     ];
-    [highway~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street)$"];
+    way
+      [highway~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street)$"];
     (._;>;);
     out meta qt;
     """.strip()

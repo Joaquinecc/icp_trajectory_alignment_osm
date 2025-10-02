@@ -22,7 +22,6 @@ def generate_launch_description():
         default_value='',
         description='Path to bag file'
     )
-
     declare_odom_topic = DeclareLaunchArgument(
         'odom_topic',
         default_value='/liodom/odom',
@@ -88,8 +87,8 @@ def generate_launch_description():
         ),
         launch_arguments={
             'viz': 'false',
-            'mapping': 'true',
-            'use_imu': 'true',
+            'mapping': 'false',
+            'use_imu': 'false',
         }.items()
     )
 
@@ -103,7 +102,7 @@ def generate_launch_description():
     )
 
     play_ros_bag = ExecuteProcess(
-        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_file'), '--delay', '3', '--rate', '1.0'],
+        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_file'), '--delay', '3', '--rate', '1.0','--start-offset', '8'],
         output='screen'
     )
 
@@ -117,7 +116,7 @@ def generate_launch_description():
             package='tf2_ros',
             executable='static_transform_publisher',
             name='base_link_to_lidar',
-            arguments=['0', '0', '0', '0', '0', '1.5', 'os_lidar', 'base_link'],
+            arguments=['0', '0', '0', '0', '0', '0', 'os_lidar', 'base_link'],
             parameters=[{'use_sim_time': True}],  # same as <param name="use_sim_time" value="true"/>
             output='screen'
     )

@@ -19,7 +19,7 @@
     }
     /* switched from <img> to <canvas> */
     .cameraOverlay canvas{
-      display: block; width: 320px; height: 180px; border-radius: 8px;
+      display: block; width: 640px; height: 360px; border-radius: 8px;
       image-rendering: crisp-edges; image-rendering: pixelated;
     }
     .cameraOverlay .label{
@@ -112,6 +112,11 @@
       console.error(e);
     }
   });
+
+
+
+
+// // ===== // ===== // ===== // ===== // =====  
 
   // ===== RAW IMAGE -> Canvas (sensor_msgs/Image, rgb8) =====
   const camCanvas = document.getElementById('camCanvas');
@@ -212,6 +217,9 @@
       console.error(e);
     }
   });
+
+
+
 </script>
 </body>
 </html>

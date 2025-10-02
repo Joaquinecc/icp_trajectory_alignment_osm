@@ -6,9 +6,7 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
-        - /Odometry1
         - /Odometry1/Shape1
-        - /PointCloud21
         - /Odometry2
         - /Odometry2/Shape1
         - /MarkerArray1
@@ -165,7 +163,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /osm_align/gt_ins_data
+        Value: /osm_align/ins_data2_odom
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
@@ -278,7 +276,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 190.6574249267578
+      Distance: 731.8330078125
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -296,7 +294,7 @@ Visualization Manager:
       Pitch: 1.5697963237762451
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 4.400398254394531
+      Yaw: 3.675400495529175
     Saved: ~
 Window Geometry:
   Displays:

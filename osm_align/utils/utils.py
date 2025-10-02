@@ -3,7 +3,7 @@ from scipy.spatial.transform import Rotation
 from typing import List, Tuple, Union, Optional
 from geometry_msgs.msg import Pose
 import numpy as np
-
+import lanelet2
 
 def pose_to_4x4(pose: Pose) -> np.ndarray:
     """
@@ -713,3 +713,50 @@ def find_k_closest_neighbors_for_points(
         # Return the indices
         closest_indices.append(k_indices)
     return np.array(closest_indices)
+
+
+def lane_points_and_it_nn(lanelet_map: lanelet2.core.LaneletMap , min_dist: float = 3.0) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Build the lanelet point list and its next-point associations.
+    It ignores points that are too close to the previous point, defined by min_dist.
+
+    Parameters
+    ----------
+    lanelet_map : lanelet2.LaneletMap
+        Lanelet map to build the kdtree from.
+    min_dist : float, default=3.0
+        Minimum distance between points to be considered as a new point.
+
+    Returns
+    -------
+    lane_points : np.ndarray
+        Array of shape (N, 2) containing the lane points.
+    lane_points_next : np.ndarray
+        Array of shape (N, 2) containing the next lane points.
+    """
+    lane_points_next = []
+    lane_points = []
+    
+    for lanelet in lanelet_map.laneletLayer:
+        prev_point = None
+        centerline = lanelet.centerline
+        aux_points = []
+        for i, point in enumerate(centerline):
+            corrected_point = np.array([point.x, point.y])
+            if prev_point is not None:
+                if np.linalg.norm(corrected_point - prev_point) < min_dist:
+                    continue
+            prev_point = corrected_point
+            aux_points.append(corrected_point)
+        lane_points.extend(aux_points)
+        
+        # Create next-point associations for tangent computation
+        for i in range(len(aux_points)):
+            nn = None
+            if i < len(aux_points) - 1:
+                nn = aux_points[i + 1]
+            else:
+                nn = aux_points[i - 1]
+            lane_points_next.append(nn)
+
+    return lane_points, lane_points_next
