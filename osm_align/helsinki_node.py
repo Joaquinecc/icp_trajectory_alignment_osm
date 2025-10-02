@@ -24,8 +24,10 @@ from std_msgs.msg import String
 
 
 INS_TOPIC = "/Inertial_Labs/ins_data"
-GT_INS_TOPIC = "osm_align/gt_ins_data"
-MAP_MARKER_TOPIC = "osm_align/map_markers"
+GT_INS_TOPIC = "osm_align/gt_ins_data" #Convert to UTM
+MAP_MARKER_TOPIC = "osm_align/map_markers" #Topic for lanelet markers
+ODOM_ALIGNED_TOPIC = 'osm_align/odom_aligned' #Topic for aligned odometry
+CAR_GEOJSON_TOPIC = 'osm_align/car_geojson' #Topic for odom corrected in gps string
 
 
 class HelsinkiNode(Node):
@@ -94,7 +96,7 @@ class HelsinkiNode(Node):
             10
         )
         
-        
+
 
         # Publisher with transient local QoS (latching-like)
         qos = QoSProfile(
@@ -114,14 +116,14 @@ class HelsinkiNode(Node):
             self.odom_callback,
             10
         )
-        self.publisher_odom=self.create_publisher(Odometry, '/osm_align/odom_aligned', 10) 
+        self.publisher_odom=self.create_publisher(Odometry, ODOM_ALIGNED_TOPIC, 10) 
     
 
-        self.navsat_pub = self.create_publisher(NavSatFix, '/osm_align/car_wgs84', 10)
-        self.geojson_pub = self.create_publisher(String, '/osm_align/car_geojson', 10)
+        self.geojson_pub = self.create_publisher(String, CAR_GEOJSON_TOPIC, 10)
 
     def odom_callback(self, msg: Odometry) -> None:  
-        pose_corrected, message=self.trajectory_correction.apply(utils.pose_to_4x4(msg.pose.pose))
+
+        pose_corrected, message=self.trajectory_correction.apply(self.tf_to_utm@utils.pose_to_4x4(msg.pose.pose))
         if message==0:
             self.get_logger().debug(f"frame {self.frame_count} trajectory length < {self.min_distance_threshold}, skip ICP")
         elif message==1:
@@ -150,17 +152,6 @@ class HelsinkiNode(Node):
         x = pose.position.x
         y = pose.position.y
         gp = self._utm_projector.reverse(BasicPoint3d(x, y, 0.0))   
-
-        # Publish NavSatFix (simple)
-        fix = NavSatFix()
-        fix.header = self.get_clock().now().to_msg()
-        fix.status.status = NavSatStatus.STATUS_FIX
-        fix.status.service = 1  # GPS
-        fix.latitude = float(gp.lat)
-        fix.longitude = float(gp.lon)
-        fix.altitude = 0
-        # self.navsat_pub.publish(fix)
-
         # Publish small GeoJSON (Point)
         feature = {
             "type": "Feature",
@@ -186,7 +177,7 @@ class HelsinkiNode(Node):
         """
         odom_msg = Odometry()
         odom_msg.header.frame_id = "odom" 
-        odom_msg.child_frame_id = "velo_link"
+        odom_msg.child_frame_id = "os_lidar"
         
 
         odom_msg.header.stamp = self.get_clock().now().to_msg()
@@ -198,6 +189,7 @@ class HelsinkiNode(Node):
     def ins_callback(self, msg: InsData):
         # Initialize projector with the first received LLH as origin
         if self._utm_projector is None:
+            # self.get_logger().info(f"First INS message received {msg}")
             lat0 = float(msg.llh.x)
             lon0 = float(msg.llh.y)
             alt0 = float(msg.llh.z)
@@ -208,6 +200,16 @@ class HelsinkiNode(Node):
             self.get_logger().info(
                 f"Initialized UTM projector with origin lat={lat0:.8f}, lon={lon0:.8f}, alt={alt0:.2f}"
             )
+
+
+            self.tf_to_utm=np.eye(4)
+            yaw_deg = float(msg.ypr.x)
+            pitch_deg = float(msg.ypr.y)    
+            roll_deg = float(msg.ypr.z)
+            r = Rotation.from_euler('zyx', [yaw_deg, pitch_deg, roll_deg], degrees=True)
+            self.tf_to_utm[:3, :3] = r.as_matrix()
+            self.get_logger().info(f"tf_to_utm: {self.tf_to_utm}")
+            # Load lanelet map
             self._load_lanelet_map()
             self.publish_lanelet_markers()
 

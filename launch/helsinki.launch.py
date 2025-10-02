@@ -112,6 +112,18 @@ def generate_launch_description():
         output='screen'
     )
 
+    
+    tf_base_link_to_lidar =Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='base_link_to_lidar',
+            arguments=['0', '0', '0', '0', '0', '1.5', 'os_lidar', 'base_link'],
+            parameters=[{'use_sim_time': True}],  # same as <param name="use_sim_time" value="true"/>
+            output='screen'
+    )
+
+
+
     return LaunchDescription([
         declare_map_lanelet_path,
         declare_odom_topic,
@@ -121,6 +133,7 @@ def generate_launch_description():
         declare_icp_error_threshold,
         declare_trimming_ratio,
         declare_min_distance_threshold,
+        tf_base_link_to_lidar,
         helsinki_node,
         bridge_socket,
         liodom_launch,
