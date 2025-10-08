@@ -11,7 +11,6 @@ from scipy.spatial.transform import Rotation
 from scipy.spatial import cKDTree
 from tf2_ros import Buffer, TransformListener, StaticTransformBroadcaster
 import osm_align.utils.utils as utils
-from osm_align.utils.kitti_utils import angle_dict, cordinta_dict
 from scipy.linalg import inv
 import time
 from osm_align.odometry_correction import OdomCorrector
@@ -20,12 +19,15 @@ from geometry_msgs.msg import Point
 from rclpy.duration import Duration
 from rclpy.qos import QoSProfile, QoSHistoryPolicy, QoSDurabilityPolicy, ReliabilityPolicy
 from geometry_msgs.msg import TransformStamped
+from sensor_msgs.msg import Imu, NavSatFix
 
 # Configuration parameters are now declared as ROS parameters in the node
 
 BASE_FRAME="base_link"
 SENSOR_FRAME="velo_link"
-
+IMU_TOPIC="/kitti/oxts/imu"
+GPS_TOPIC_NAME='/kitti/oxts/gps'
+MIN_DIST_LANELET_POINTS=3.0 #3 meters
 class KittiOdometryCorrection(Node):
     """
     ROS2 node that aligns odometry to OSM/Lanelet2 centerlines.
@@ -75,11 +77,9 @@ class KittiOdometryCorrection(Node):
         self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.save_resuts_path: str = self.get_parameter('save_resuts_path').get_parameter_value().string_value
 
-            
-        # Always use frame_id to get origin coordinates and angle correction from dictionaries
-        self.origin_coords_lanelet: List[float] = [cordinta_dict[self.frame_id]['origin_lat'], cordinta_dict[self.frame_id]['origin_lon']]
-        self.angle_lanelet_correction: float = angle_dict[self.frame_id]
-                # Print all parameters for debugging/logging
+        self.broadcaster = StaticTransformBroadcaster(self)
+        
+        # Print all parameters for debugging/logging
         self.get_logger().info(
             f"Parameters:\n"
             f"  frame_id: {self.frame_id}\n"
@@ -93,21 +93,25 @@ class KittiOdometryCorrection(Node):
             f"  odom_topic: {self.odom_topic}\n"
             f"  save_resuts_path: {self.save_resuts_path}"
         )
-        # Initialize lanelet-related variables
-        self.projector: Optional[lanelet2.projection.UtmProjector] = None
-        self.lanelet_map: Optional[lanelet2.core.LaneletMap] = None
-        self.lane_points: Optional[np.ndarray] = None
-        self.lane_points_next: Optional[np.ndarray] = None
-        self.pose_segment: List[Pose] = []
-        self.delta_t_acc=np.eye(4)
-        # New: history buffers
-        self.poses_history: List[np.ndarray] = []
-        self.align_runtimes: List[float] = []
-        # Load lanelet map and build KD-tree
-        self._load_lanelet_map()
-        self._build_lane_kdtree()
+        # This variables are initialized in the first gps_callback
+        self.lanelet_map: Optional[lanelet2.core.LaneletMap] = None #Lanelet map
+        self.lane_points: Optional[np.ndarray] = None #Lanelet points
+        self.lane_points_nn: Optional[np.ndarray] = None #Lanelet points next-point associations
+        self.origin_coords_lanelet: Optional[List[float]] = None #Origin gps coordinates of the lanelet map
+        self.lane_kdtree: Optional[cKDTree] = None #Lanelet kdtree
+        self.trajectory_correction: Optional[OdomCorrector] = None #Trajectory correction
+
+        # This variables are initialized in the first imu_callback
+        self.tf_odom_to_utm: Optional[np.ndarray] = None
+        self.projector: Optional[lanelet2.projection.UtmProjector] = None #UTM projector
+
+        # This variables are initialized in the first odom_callback
+        self.pose_segment: List[Pose] = [] #Pose history
+        self.delta_t_acc=np.eye(4) #Delta t accumulator
+        self.poses_history: List[np.ndarray] = [] #Pose history
+        self.align_runtimes: List[float] = [] #Alignment runtime
         
-        args={
+        self.correction_args={
             'pose_segment_size': self.pose_segment_size,
             'knn_neighbors': self.knn_neighbors,
             'valid_correspondence_threshold': self.valid_correspondence_threshold,
@@ -115,8 +119,15 @@ class KittiOdometryCorrection(Node):
             'trimming_ratio': self.trimming_ratio,
             'min_distance_threshold': self.min_distance_threshold,
         }
-        self.trajectory_correction=OdomCorrector(self.lane_points, self.lane_points_next, self.lane_kdtree, args)
 
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
+        self.tf_base_to_imu, _ = self.get_transform_matrix_from_tf(
+            source_frame="base_link", 
+            target_frame="imu_link", 
+            timeout_sec=5
+        )
 
         # Create subscription
         self.subscription = self.create_subscription(   
@@ -127,15 +138,19 @@ class KittiOdometryCorrection(Node):
         )
         self.publisher_odom=self.create_publisher(Odometry, '/osm_align/odom_aligned', 10)
         
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
-
-
-        self.base_to_velo, _ = self.get_transform_matrix_from_tf(
-            source_frame=BASE_FRAME, 
-            target_frame=SENSOR_FRAME, 
-            timeout_sec=2
+        self.subscription_imu = self.create_subscription(
+            Imu,
+            IMU_TOPIC,
+            self.imu_callback,
+            10
         )
+        self.subscription_gps = self.create_subscription(
+            NavSatFix,
+            GPS_TOPIC_NAME,
+            self.gps_callback,
+            10
+        )
+
         qos = QoSProfile(
             depth=1,
             history=QoSHistoryPolicy.KEEP_LAST,
@@ -143,134 +158,70 @@ class KittiOdometryCorrection(Node):
             reliability=ReliabilityPolicy.RELIABLE,
         )
         self.map_pub = self.create_publisher(MarkerArray, '/osm_align/lanelet_markers', qos)
-        self._publish_markers()
 
-        self.get_logger().info(f"Base to Velodyne transform matrix (from rclpy):\n{self.base_to_velo}")
 
-        self._publish_tf_map_utm()
 
-    def _publish_tf_map_utm(self) -> None:
+    def imu_callback(self, msg: Imu) -> None:
         """
-        Publish the transformation matrix from the map frame to the UTM frame.
+        Callback processing incoming IMU messages.
         """
-        self.broadcaster = StaticTransformBroadcaster(self)
+        #To get initial orientation of the vehicle
+        if self.tf_odom_to_utm is None:
+            self.get_logger().info(f"Initial orientation of the vehicle in ENU coordinates: {msg}")
+            #Get orientation of the vehicle in ENU coordinates
+            quat_ori= np.array([msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w])
+            quat_ori= Rotation.from_quat(quat_ori).as_matrix()
+            #Convert to UTM coordinates
+            self.tf_odom_to_utm=np.identity(4)
+            self.tf_odom_to_utm[:3,:3] = quat_ori[:3,:3]@self.tf_base_to_imu[:3,:3]
+            self.get_logger().info(f"TF to UTM matrix: {self.tf_odom_to_utm}")
+            self.publish_transform_to_utm()
 
-
-        tf_odom_to_utm= np.identity(4)
-        rotation_angle = np.radians(-self.angle_lanelet_correction)
-
-        tf_odom_to_utm[:2,:2] = np.array([
-            [np.cos(rotation_angle), -np.sin(rotation_angle)],
-            [np.sin(rotation_angle),  np.cos(rotation_angle)],
-        ])
-
-    
-        tf_odom_to_utm =  tf_odom_to_utm@ self.base_to_velo 
-        
-        static_transform = TransformStamped()
-        static_transform.header.stamp = self.get_clock().now().to_msg()
-        static_transform.header.frame_id = 'utm'     # parent frame
-        static_transform.child_frame_id = 'odom'  # child frame
-
-        static_transform.transform.translation.x = tf_odom_to_utm[0, 3]
-        static_transform.transform.translation.y = tf_odom_to_utm[1, 3]
-        static_transform.transform.translation.z = tf_odom_to_utm[2, 3]
-
-        rotation_matrix = tf_odom_to_utm[:3, :3]
-        rotation = Rotation.from_matrix(rotation_matrix)
-        quaternion = rotation.as_quat()
-        static_transform.transform.rotation.x = quaternion[0]
-        static_transform.transform.rotation.y = quaternion[1]
-        static_transform.transform.rotation.z = quaternion[2]
-        static_transform.transform.rotation.w = quaternion[3]
-
-        self.broadcaster.sendTransform(static_transform)
-
-
-    def _load_lanelet_map(self) -> None:
+    def publish_transform_to_utm(self) -> None:
         """
-        Load lanelet map from OpenStreetMap file using UTM projection.
-
-        Initializes the UTM projector with the provided origin coordinates
-        and loads the lanelet map data for subsequent processing.
-
-        Raises
-        ------
-        Exception
-        If the lanelet map file cannot be loaded or is corrupted.
-
-        Notes
-        -----
-        The projector converts GPS coordinates to local UTM coordinates
-        for efficient geometric computations during trajectory alignment.
+        Publish the transform to the IMU frame.
         """
-        self.projector = lanelet2.projection.UtmProjector(
-            lanelet2.io.Origin(self.origin_coords_lanelet[0], self.origin_coords_lanelet[1])
-        )
-        self.lanelet_map = lanelet2.io.load(self.map_lanelet_path, self.projector)
-        
-        self.get_logger().info(f"Lanelet map loaded from: {self.map_lanelet_path}")
-        self.get_logger().info(f"Origin coordinates: {self.origin_coords_lanelet}")
-        self.get_logger().info(f"Angle correction: {self.angle_lanelet_correction} degrees")
+        transform_stamped = TransformStamped()
+        transform_stamped.header.frame_id = "utm"
+        transform_stamped.child_frame_id = "odom"
+        transform_stamped.transform.translation.x = self.tf_odom_to_utm[0, 3]
+        transform_stamped.transform.translation.y = self.tf_odom_to_utm[1, 3]
+        transform_stamped.transform.translation.z = self.tf_odom_to_utm[2, 3]
+        quat = Rotation.from_matrix(self.tf_odom_to_utm[:3, :3]).as_quat()
+        transform_stamped.transform.rotation.x = quat[0]
+        transform_stamped.transform.rotation.y = quat[1]
+        transform_stamped.transform.rotation.z = quat[2]
+        transform_stamped.transform.rotation.w = quat[3]
+        self.broadcaster.sendTransform(transform_stamped)
 
-    def _build_lane_kdtree(self) -> None:
+        self.get_logger().info(f"Published transform to UTM frame: {self.tf_odom_to_utm}")
+    def gps_callback(self, msg: NavSatFix) -> None:
         """
-        Extract lanelet centerlines and build spatial index for efficient queries.
-
-        Processes all lanelets in the map to extract centerline points, applies
-        coordinate system rotation, removes duplicate points, and builds a KD-tree
-        for fast nearest neighbor searches during trajectory alignment.
-
-        The algorithm:
-        1. Iterates through all lanelets and extracts centerline points
-        2. Applies rotation matrix to align with vehicle coordinate system
-        3. Filters points to maintain minimum spacing (1.0 meter)
-        4. Creates "next point" associations for tangent vector computation
-        5. Builds KD-tree spatial index
-
-        Notes
-        -----
-        The minimum distance filtering (min_dist=1.0) reduces computational
-        complexity while preserving map geometry for alignment purposes.
+        Callback processing incoming GPS messages.
         """
-        # Define rotation matrix
-        rotation_angle = np.radians(self.angle_lanelet_correction)
-        R_M = np.array([
-            [np.cos(rotation_angle), -np.sin(rotation_angle)],
-            [np.sin(rotation_angle), np.cos(rotation_angle)]
-        ])
-        lane_points = []
-        min_dist = 3.0
-        lane_points_next = []
-        
-        for lanelet in self.lanelet_map.laneletLayer:
-            prev_point = None
-            centerline = lanelet.centerline
-            aux_points = []
-            for i, point in enumerate(centerline):
-                corrected_point = R_M @ np.array([point.x, point.y])
-                if prev_point is not None:
-                    if np.linalg.norm(corrected_point - prev_point) < min_dist:
-                        continue
-                prev_point = corrected_point
-                aux_points.append(corrected_point)
-            lane_points.extend(aux_points)
-            
-            # Create next-point associations for tangent computation
-            for i in range(len(aux_points)):
-                nn = None
-                if i < len(aux_points) - 1:
-                    nn = aux_points[i + 1]
-                else:
-                    nn = aux_points[i - 1]
-                lane_points_next.append(nn)
+        if self.origin_coords_lanelet is None:
+            self.get_logger().info(f"Initial position of the vehicle in ENU coordinates: {msg}")
+            #Get position of the vehicle in ENU coordinates
+            self.origin_coords_lanelet= np.array([msg.latitude, msg.longitude, msg.altitude])
+            self.projector = lanelet2.projection.UtmProjector(
+                lanelet2.io.Origin(self.origin_coords_lanelet[0], self.origin_coords_lanelet[1])
+            )
+            #Load lanelet map   
+            self.lanelet_map = lanelet2.io.load(self.map_lanelet_path, self.projector)
+            self.get_logger().info(f"Origin coordinates: {self.origin_coords_lanelet}")
+            #Build lanelet points and its next-point associations
+            lane_points, lane_points_nn = utils.lane_points_and_it_nn(self.lanelet_map, MIN_DIST_LANELET_POINTS)
+            #Build KD-tree
+            self.lane_points_nn = np.array(lane_points_nn)
+            self.lane_points = np.array(lane_points)
+            self.lane_kdtree = cKDTree(self.lane_points)
 
-        self.lane_points_next = np.array(lane_points_next)
-        self.lane_points = np.array(lane_points)
-        self.lane_kdtree = cKDTree(self.lane_points)
-        
-        self.get_logger().info(f"Built KD-tree with {len(lane_points)} lane points")
- 
+            self.trajectory_correction=OdomCorrector(self.lane_points, self.lane_points_nn, self.lane_kdtree, self.correction_args)
+            #Publish lanelet markers
+            self.publish_lanelet_markers()
+
+
+
     def publish_odom(self, pose: Pose) -> None:
         """
         Publish the aligned odometry message.
@@ -285,7 +236,7 @@ class KittiOdometryCorrection(Node):
         """
         odom_msg = Odometry()
         odom_msg.header.frame_id = "odom" 
-        odom_msg.child_frame_id = "velo_link"
+        odom_msg.child_frame_id = "base_link"
         
 
         odom_msg.header.stamp = self.get_clock().now().to_msg()
@@ -294,41 +245,17 @@ class KittiOdometryCorrection(Node):
 
         self.get_logger().debug(f"frame {self.frame_count} pose: {pose.position.x}, {pose.position.y}, {pose.position.z}")
 
-    def _extract_centerlines(self) -> List[np.ndarray]:
-        rotation_angle = np.radians(self.angle_lanelet_correction)
-        R_M = np.array([
-            [np.cos(rotation_angle), -np.sin(rotation_angle)],
-            [np.sin(rotation_angle),  np.cos(rotation_angle)],
-        ])
-
-        # rotation_matrix = self.tf_to_map.transform.rotation
-        # rotation_matrix = Rotation.from_quat([rotation_matrix.x, rotation_matrix.y, rotation_matrix.z, rotation_matrix.w])
-        # rotation_matrix = rotation_matrix.as_matrix()[:2, :2]
-        # R_M = rotation_matrix @ R_M
-
-        centerlines: List[np.ndarray] = []
-        for lanelet in self.lanelet_map.laneletLayer:
-            prev_point: Optional[np.ndarray] = None
-            points_xy: List[np.ndarray] = []
-            for pt in lanelet.centerline:
-                xy = R_M @ np.array([pt.x, pt.y])
-                if prev_point is not None:
-                    if np.linalg.norm(xy - prev_point) < 1.0:
-                        continue
-                prev_point = xy
-                points_xy.append(xy)
-            if len(points_xy) >= 2:
-                centerlines.append(np.array(points_xy))
-        self.get_logger().info(f"Extracted {len(centerlines)} centerline polylines")
-        return centerlines
-
-
-    def _publish_markers(self) -> None:
-        centerlines = self._extract_centerlines()
+    def publish_lanelet_markers(self) -> None:
+        """
+        Publish the lanelet markers for RVIZ visualization.
+        """
+        #Map settings for RVIZ visualization
         markers = MarkerArray()
-        for idx, line in enumerate(centerlines):
+        for idx, lanelet in enumerate(self.lanelet_map.laneletLayer):
+            line=[[pt.x, pt.y] for pt in lanelet.centerline]
+            line=np.array(line)
             marker = Marker()
-            marker.header.frame_id = "velo_link"
+            marker.header.frame_id = "utm"
             marker.header.stamp.sec = 0
             marker.header.stamp.nanosec = 0
             # marker.header.stamp = self.get_clock().now().to_msg()
@@ -385,8 +312,12 @@ class KittiOdometryCorrection(Node):
         msg : nav_msgs.msg.Odometry
             Incoming odometry message.
         """
+        if self.origin_coords_lanelet is None:
+            return
         #move to velodyne frame
-        transformed_pose = self.base_to_velo@utils.pose_to_4x4(msg.pose.pose)
+        tf= self.tf_odom_to_utm if self.tf_odom_to_utm is not None else np.identity(4)
+        transformed_pose = tf@utils.pose_to_4x4(msg.pose.pose) #Transform to UTM frame
+        self.get_logger().info(f"origina {utils.pose_to_4x4(msg.pose.pose) } transformed_pose: {transformed_pose} ")
         t0 = time.perf_counter()
         pose_corrected, message=self.trajectory_correction.apply(transformed_pose)
         dt = time.perf_counter() - t0
@@ -404,11 +335,12 @@ class KittiOdometryCorrection(Node):
 
         self.align_runtimes.append(dt)
         self.frame_count += 1
-        self.poses_history.append(pose_corrected)
 
 
         # Record pose to history before publishing
-        pose_corrected = inv(self.base_to_velo) @pose_corrected
+        pose_corrected=inv(self.tf_odom_to_utm)@pose_corrected
+        self.poses_history.append(pose_corrected)
+
         pose_recived=msg.pose.pose
         pose_recived.position.x=pose_corrected[0, -1]
         pose_recived.position.y=pose_corrected[1, -1]
@@ -419,84 +351,83 @@ class KittiOdometryCorrection(Node):
         pose_recived.orientation.w=pose_corrected[3, 0]
         self.publish_odom(pose_recived)
 
-
     def get_transform_matrix_from_tf(
-        self, 
-        source_frame: str = "base_link", 
-        target_frame: str = "velo_link", 
-        timeout_sec: float = 2.0
-    ) -> Tuple[np.ndarray, bool]:
-        """
-        Retrieve transformation matrix between coordinate frames using TF2.
+            self, 
+            source_frame: str = "base_link", 
+            target_frame: str = "velo_link", 
+            timeout_sec: float = 2.0
+        ) -> Tuple[np.ndarray, bool]:
+            """
+            Retrieve transformation matrix between coordinate frames using TF2.
 
-        Queries the TF2 transform tree to obtain the homogeneous transformation
-        matrix between two coordinate frames, typically used to convert poses
-        from one reference frame to another (e.g., base_link to velodyne).
+            Queries the TF2 transform tree to obtain the homogeneous transformation
+            matrix between two coordinate frames, typically used to convert poses
+            from one reference frame to another (e.g., base_link to velodyne).
 
-        Parameters
-        ----------
-        source_frame : str, default="base_link"
-        	Name of the source coordinate frame.
-        target_frame : str, default="velodyne"  
-        	Name of the target coordinate frame.
-        timeout_sec : float, default=2.0
-        	Maximum time to wait for the transform to become available.
+            Parameters
+            ----------
+            source_frame : str, default="base_link"
+                Name of the source coordinate frame.
+            target_frame : str, default="velodyne"  
+                Name of the target coordinate frame.
+            timeout_sec : float, default=2.0
+                Maximum time to wait for the transform to become available.
 
-        Returns
-        -------
-        transform_matrix : np.ndarray
-        	Homogeneous transformation matrix of shape (4, 4) that transforms
-        	points from source_frame to target_frame. Returns identity matrix
-        	if transform lookup fails.
-        success : bool
-        	True if the transform was successfully retrieved, False otherwise.
+            Returns
+            -------
+            transform_matrix : np.ndarray
+                Homogeneous transformation matrix of shape (4, 4) that transforms
+                points from source_frame to target_frame. Returns identity matrix
+                if transform lookup fails.
+            success : bool
+                True if the transform was successfully retrieved, False otherwise.
 
-        Examples
-        --------
-        >>> # Get base_link to velodyne transform
-        >>> T, success = node.get_transform_matrix_from_tf("base_link", "velo_link")
-        >>> if success:
-        ...     print(f"Translation: {T[:3, 3]}")
-        ...     print(f"Rotation matrix: {T[:3, :3]}")
+            Examples
+            --------
+            >>> # Get base_link to velodyne transform
+            >>> T, success = node.get_transform_matrix_from_tf("base_link", "velo_link")
+            >>> if success:
+            ...     print(f"Translation: {T[:3, 3]}")
+            ...     print(f"Rotation matrix: {T[:3, :3]}")
 
-        Notes
-        -----
-        The function converts ROS TransformStamped messages to homogeneous
-        matrices for use in geomesstric computations. Handles quaternion to
-        rotation matrix conversion using scipy's Rotation class.
-        """
-        try:
-            transform_stamped = self.tf_buffer.lookup_transform(
-                target_frame,     # target frame (to)
-                source_frame,     # source frame (from)
-                rclpy.time.Time(seconds=0),  # latest available
-                timeout=rclpy.duration.Duration(seconds=timeout_sec)
-            )    
-            self.get_logger().info(f"Transform stamped: {transform_stamped}")
-            
-            # Extract translation
-            translation = transform_stamped.transform.translation
-            t = np.array([translation.x, translation.y, translation.z])
-            
-            # Extract rotation quaternion
-            rotation = transform_stamped.transform.rotation
-            quat = [rotation.x, rotation.y, rotation.z, rotation.w]
-            
-            # Convert quaternion to rotation matrix
-            r = Rotation.from_quat(quat)
-            R = r.as_matrix()
-            
-            # Create 4x4 homogeneous transformation matrix
-            transform_matrix = np.eye(4)
-            transform_matrix[:3, :3] = R
-            transform_matrix[:3, 3] = t
-            
-            self.get_logger().info(f"Successfully got transform from {source_frame} to {target_frame}")
-            return transform_matrix, True
-            
-        except Exception as e:
-            self.get_logger().warn(f"Failed to get transform from {source_frame} to {target_frame}: {str(e)}")
-            return np.eye(4), False
+            Notes
+            -----
+            The function converts ROS TransformStamped messages to homogeneous
+            matrices for use in geomesstric computations. Handles quaternion to
+            rotation matrix conversion using scipy's Rotation class.
+            """
+            try:
+                transform_stamped = self.tf_buffer.lookup_transform(
+                    target_frame,     # target frame (to)
+                    source_frame,     # source frame (from)
+                    rclpy.time.Time(seconds=0),  # latest available
+                    timeout=rclpy.duration.Duration(seconds=timeout_sec)
+                )    
+                self.get_logger().debug(f"Transform stamped: {transform_stamped}")
+                
+                # Extract translation
+                translation = transform_stamped.transform.translation
+                t = np.array([translation.x, translation.y, translation.z])
+                
+                # Extract rotation quaternion
+                rotation = transform_stamped.transform.rotation
+                quat = [rotation.x, rotation.y, rotation.z, rotation.w]
+                
+                # Convert quaternion to rotation matrix
+                r = Rotation.from_quat(quat)
+                R = r.as_matrix()
+                
+                # Create 4x4 homogeneous transformation matrix
+                transform_matrix = np.eye(4)
+                transform_matrix[:3, :3] = R
+                transform_matrix[:3, 3] = t
+                
+                self.get_logger().info(f"Successfully got transform from {source_frame} to {target_frame}")
+                return transform_matrix, True
+                
+            except Exception as e:
+                self.get_logger().warn(f"Failed to get transform from {source_frame} to {target_frame}: {str(e)}")
+                raise e
 
 
 def main(args: Optional[List[str]] = None) -> None:
@@ -536,7 +467,6 @@ def main(args: Optional[List[str]] = None) -> None:
     node.get_logger().info(f"Starting OSM Alignment with frame_id: {node.frame_id}")
     node.get_logger().info(f"Map path: {node.map_lanelet_path}")
     node.get_logger().info(f"Origin coordinates: {node.origin_coords_lanelet}")
-    node.get_logger().info(f"Angle correction: {node.angle_lanelet_correction}")
     node.get_logger().info(f"Pose history size: {node.pose_segment_size}")
     node.get_logger().info(f"ICP error threshold: {node.icp_error_threshold}")
     node.get_logger().info(f"Odometry topic: {node.odom_topic}")
