@@ -24,7 +24,7 @@ from sensor_msgs.msg import Imu, NavSatFix
 # Configuration parameters are now declared as ROS parameters in the node
 
 BASE_FRAME="base_link"
-SENSOR_FRAME="velo_link"
+IMU_SENSOR_FRAME="imu_link"
 IMU_TOPIC="/kitti/oxts/imu"
 GPS_TOPIC_NAME='/kitti/oxts/gps'
 MIN_DIST_LANELET_POINTS=3.0 #3 meters
@@ -124,8 +124,8 @@ class KittiOdometryCorrection(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
         self.tf_base_to_imu, _ = self.get_transform_matrix_from_tf(
-            source_frame="base_link", 
-            target_frame="imu_link", 
+            source_frame=BASE_FRAME, 
+            target_frame=IMU_SENSOR_FRAME, 
             timeout_sec=5
         )
 
@@ -345,10 +345,11 @@ class KittiOdometryCorrection(Node):
         pose_recived.position.x=pose_corrected[0, -1]
         pose_recived.position.y=pose_corrected[1, -1]
         pose_recived.position.z=pose_corrected[2, -1]
-        pose_recived.orientation.x=pose_corrected[0, 0]
-        pose_recived.orientation.y=pose_corrected[1, 0]
-        pose_recived.orientation.z=pose_corrected[2, 0]
-        pose_recived.orientation.w=pose_corrected[3, 0]
+        quat=Rotation.from_matrix(pose_corrected[:3, :3]).as_quat()
+        pose_recived.orientation.x=quat[0]
+        pose_recived.orientation.y=quat[1]
+        pose_recived.orientation.z=quat[2]
+        pose_recived.orientation.w=quat[3]
         self.publish_odom(pose_recived)
 
     def get_transform_matrix_from_tf(
