@@ -4,7 +4,7 @@ A ROS2 package for real-time odometry trajectory correction using OpenStreetMap 
 
 ## Overview
 
-OSM Align implements trajectory-to-map alignment for autonomous vehicle navigation, correcting drift in laser odometry systems using OpenStreetMap road network data. The system uses Lanelet2 library to process OSM data and publishes corrected odometry on `/osm_align/odom_aligned`.
+OSM Align implements trajectory-to-map alignment for autonomous vehicle navigation, correcting drift in laser odometry systems using OpenStreetMap road network data. The system uses Lanelet2 library to process OSM data and publishes corrected odometry on `/osm_align/odom`.
 
 ## Algorithm Overview
 
@@ -13,7 +13,7 @@ OSM Align implements trajectory-to-map alignment for autonomous vehicle navigati
 3. **Correspondence Finding**: Uses KD-tree for efficient nearest neighbor queries
 4. **Normal Shooting**: Projects trajectory normals to find map intersections
 5. **Robust Alignment**: Employs trimmed/RANSAC ICP for drift-resistant pose correction
-6. **Publish Corrected Odometry**: Outputs corrected poses on `/osm_align/odom_aligned`
+6. **Publish Corrected Odometry**: Outputs corrected poses on `/osm_align/odom`
 
 
 ## Requirements
@@ -102,7 +102,7 @@ ros2 launch osm_align osm_align.launch.py \
 - `odom_topic` (`nav_msgs/Odometry`) - Input odometry messages (default `/liodom/odom`)
 
 ### Published Topics
-- `/osm_align/odom_aligned` (`nav_msgs/Odometry`) - Corrected odometry
+- `/osm_align/odom` (`nav_msgs/Odometry`) - Corrected odometry
 
 ## Testing
 

@@ -136,7 +136,7 @@ class KittiOdometryCorrection(Node):
             self.odom_callback,
             10
         )
-        self.publisher_odom=self.create_publisher(Odometry, '/osm_align/odom_aligned', 10)
+        self.publisher_odom=self.create_publisher(Odometry, '/osm_align/odom', 10)
         
         self.subscription_imu = self.create_subscription(
             Imu,
@@ -222,28 +222,25 @@ class KittiOdometryCorrection(Node):
 
 
 
-    def publish_odom(self, pose: Pose) -> None:
-        """
-        Publish the aligned odometry message.
-        Parameters
-        ----------
-        pose : geometry_msgs.msg.Pose
-            Pose to publish.
+    def publish_odom(self,odom_msg,new_pose) -> None:
 
-        Notes
-        -----
-        The pose is published as an Odometry message with the pose in the pose field.   
-        """
-        odom_msg = Odometry()
-        odom_msg.header.frame_id = "odom" 
-        odom_msg.child_frame_id = "base_link"
+        # odom_msg.header.frame_id = "odom" 
+        # odom_msg.child_frame_id = "base_link"
         
+        odom_msg.pose.pose.position.x=new_pose[0, -1]
+        odom_msg.pose.pose.position.y=new_pose[1, -1]
+        odom_msg.pose.pose.position.z=new_pose[2, -1]
 
-        odom_msg.header.stamp = self.get_clock().now().to_msg()
-        odom_msg.pose.pose=pose
+        quat=Rotation.from_matrix(new_pose[:3, :3]).as_quat()
+        odom_msg.pose.pose.orientation.x=float(quat[0])
+        odom_msg.pose.pose.orientation.y=float(quat[1])
+        odom_msg.pose.pose.orientation.z=float(quat[2])
+        odom_msg.pose.pose.orientation.w=float(quat[3])
+
+
         self.publisher_odom.publish(odom_msg)
 
-        self.get_logger().debug(f"frame {self.frame_count} pose: {pose.position.x}, {pose.position.y}, {pose.position.z}")
+        # self.get_logger().debug(f"frame {self.frame_count} pose: {pose.position.x}, {pose.position.y}, {pose.position.z}")
 
     def publish_lanelet_markers(self) -> None:
         """
@@ -341,16 +338,7 @@ class KittiOdometryCorrection(Node):
         pose_corrected=inv(self.tf_odom_to_utm)@pose_corrected
         self.poses_history.append(pose_corrected)
 
-        pose_recived=msg.pose.pose
-        pose_recived.position.x=pose_corrected[0, -1]
-        pose_recived.position.y=pose_corrected[1, -1]
-        pose_recived.position.z=pose_corrected[2, -1]
-        quat=Rotation.from_matrix(pose_corrected[:3, :3]).as_quat()
-        pose_recived.orientation.x=quat[0]
-        pose_recived.orientation.y=quat[1]
-        pose_recived.orientation.z=quat[2]
-        pose_recived.orientation.w=quat[3]
-        self.publish_odom(pose_recived)
+        self.publish_odom(msg,pose_corrected)
 
     def get_transform_matrix_from_tf(
             self, 

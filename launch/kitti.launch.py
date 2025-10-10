@@ -189,6 +189,15 @@ def generate_launch_description():
         output='screen'
     )
 
+    ekf = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_node',
+        output='screen',
+        # arguments=['--ros-args', '--log-level', 'debug'],
+        parameters=[os.path.join(get_package_share_directory("osm_align"), 'config/ekf.yaml'), {'use_sim_time': True}]
+    )
+
     return LaunchDescription([  
         declare_frame_id,
         declare_map_lanelet_path,
@@ -209,4 +218,5 @@ def generate_launch_description():
         rosbridge_node,
         # rviz_node,
         kitti_bag_node,
+        ekf 
     ]) 

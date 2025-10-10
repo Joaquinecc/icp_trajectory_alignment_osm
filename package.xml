@@ -29,6 +29,7 @@
   <test_depend>python3-pytest</test_depend>
   <exec_depend>inertiallabs_ins</exec_depend>
   <exec_depend>inertiallabs_ins_msgs</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>
