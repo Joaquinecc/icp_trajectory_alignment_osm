@@ -228,7 +228,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /osm_align/odom_aligned
+        Value: /osm_align/odom
       Value: true
   Enabled: true
   Global Options:

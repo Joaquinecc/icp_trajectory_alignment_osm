@@ -209,20 +209,38 @@ class HelsinkiNode(Node):
             self._utm_projector = lanelet2.projection.UtmProjector(
                 lanelet2.io.Origin(lat0, lon0, alt0)
             )
-            self.lanelet_map = lanelet2.io.load(self.map_lanelet_path, self._utm_projector)
-
             self.get_logger().info(
                 f"Initialized UTM projector with origin lat={lat0:.8f}, lon={lon0:.8f}, alt={alt0:.2f}"
             )
+            self.lanelet_map = lanelet2.io.load(self.map_lanelet_path, self._utm_projector)
             self.get_logger().info(f"Lanelet map loaded from: {self.map_lanelet_path}")
 
+
+
             # Initialize the transformation matrix to convert from odom to utm
+            theta = np.deg2rad(150)
+            self.tf_lidar_to_base_link=np.eye(4)
+            # self.tf_lidar_to_base_link[:3, :3] =np.array([
+            # [1, 0, 0],
+            # [0, np.cos(theta), -np.sin(theta)],
+            # [0, np.sin(theta), np.cos(theta)]
+            # ])
+
+            self.tf_lidar_to_base_link[:3, :3] =np.array([
+            [np.cos(theta), -np.sin(theta), 0],
+            [np.sin(theta),  np.cos(theta), 0],
+            [0,              0,             1]
+            ])
+
             self.tf_to_utm=np.eye(4)
-            yaw_deg = float(msg.ypr.x)
-            pitch_deg = float(msg.ypr.y)    
-            roll_deg = float(msg.ypr.z)
-            r = Rotation.from_euler('zyx', [yaw_deg, pitch_deg, roll_deg], degrees=True)
-            self.tf_to_utm[:3, :3] = r.as_matrix()
+
+            # yaw_deg = float(msg.ypr.x)
+            # pitch_deg = float(msg.ypr.y)    
+            # roll_deg = float(msg.ypr.z)
+            # r = Rotation.from_euler('zyx', [yaw_deg, pitch_deg, roll_deg], degrees=True)
+            # self.tf_to_utm[:3, :3] = r.as_matrix()
+
+            self.tf_to_utm=self.tf_to_utm@self.tf_lidar_to_base_link
             self.get_logger().info(f"tf_to_utm: {self.tf_to_utm}")
 
             # Initialize the OdomCorrector object.

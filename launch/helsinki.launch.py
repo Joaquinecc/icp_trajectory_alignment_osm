@@ -8,7 +8,7 @@ from launch_ros.actions import Node
 from launch.actions import ExecuteProcess
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import AnyLaunchDescriptionSource
-
+from launch.actions import TimerAction
 from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
@@ -88,10 +88,14 @@ def generate_launch_description():
         launch_arguments={
             'viz': 'false',
             'mapping': 'false',
-            'use_imu': 'false',
+            'use_imu': 'true',
         }.items()
     )
-
+    # Delay start by 5 seconds:
+    delayed_liodom_launch = TimerAction(
+        period=8.0,  # seconds
+        actions=[liodom_launch]
+    )
     # rviz2 node
     rviz2 = Node(
         package='rviz2',
@@ -102,7 +106,7 @@ def generate_launch_description():
     )
 
     play_ros_bag = ExecuteProcess(
-        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_file'), '--delay', '3', '--rate', '1.0','--start-offset', '8'],
+        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_file'), '--delay', '3', '--rate', '1.0','--start-offset', '0'],
         output='screen'
     )
 
@@ -135,7 +139,8 @@ def generate_launch_description():
         tf_base_link_to_lidar,
         helsinki_node,
         bridge_socket,
-        liodom_launch,
+        # liodom_launch,
+        delayed_liodom_launch,
         rviz2,
         play_ros_bag,
     ])

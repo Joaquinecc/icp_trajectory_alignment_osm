@@ -16,7 +16,9 @@ from typing import List, Tuple
 import rosbag2_py
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
+from sensor_msgs.msg import NavSatFix
 
+from tqdm import tqdm
 # Message type (ensure package is built/available in your environment)
 # from inertiallabs_msgs.msg import InsData  # Not strictly needed to import directly
 
@@ -119,23 +121,29 @@ def read_insdata_coords_from_bag(
 
     msg_cls = get_message(type_map[topic_name])
 
+
     coords: List[Tuple[float, float]] = []
     while reader.has_next():
+        tqdm.write(f"Reading topic: {topic_name}")
         topic, data, t = reader.read_next()
         if topic != topic_name:
             continue
         msg = deserialize_message(data, msg_cls)
 
-        # Expect msg.llh.x (lat), msg.llh.y (lon), msg.llh.z (alt)
-        try:
-            lat = float(msg.llh.x)
-            lon = float(msg.llh.y)
-            alt = float(msg.llh.z)
-        except Exception as e:
-            # If structure differs, raise a clear error
-            raise AttributeError(
-                "Message does not contain expected fields 'msg.llh.x' and 'msg.llh.y'."
-            ) from e
+        if msg_cls == NavSatFix:
+            lat = float(msg.latitude)
+            lon = float(msg.longitude)
+            alt = float(msg.altitude)
+        else:
+            try:
+                lat = float(msg.llh.x)
+                lon = float(msg.llh.y)
+                alt = float(msg.llh.z)
+            except Exception as e:
+                # If structure differs, raise a clear error
+                raise AttributeError(
+                    "Message does not contain expected fields 'msg.llh.x' and 'msg.llh.y'."
+                ) from e
 
         # GeoJSON expects [lon, lat]
         coords.append((lon, lat, alt))
