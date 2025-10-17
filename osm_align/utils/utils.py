@@ -1,11 +1,11 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
 from typing import List, Tuple, Union, Optional
-from geometry_msgs.msg import Pose
+# from geometry_msgs.msg import Pose
 import numpy as np
 import lanelet2
 
-def pose_to_4x4(pose: Pose) -> np.ndarray:
+def pose_to_4x4(pose) -> np.ndarray:
     """
     Convert geometry_msgs/Pose to a 4x4 homogeneous transformation matrix.
 
@@ -19,6 +19,7 @@ def pose_to_4x4(pose: Pose) -> np.ndarray:
     numpy.ndarray
         A 4x4 homogeneous matrix in row-major layout.
     """
+    from geometry_msgs.msg import Pose
     quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
     R3 = Rotation.from_quat(quat).as_matrix()
     t = np.array([pose.position.x, pose.position.y, pose.position.z])
@@ -173,9 +174,10 @@ def find_interception_normal_shooting(
 
 def find_interception_normal_shooting_nextpoint_tangent(
     trajectory_points: np.ndarray, 
-    knn_indices: List[List[int]], 
+    nearest_lane_point_index: List[List[int]], 
     map_points: np.ndarray, 
-    map_next_points: np.ndarray
+    map_neighbour_points: np.ndarray,
+    lanelet_direction_points: np.ndarray
 ) -> np.ndarray:
     """
     Find intersections of trajectory normals with map segments, prioritizing parallel tangents.
@@ -188,12 +190,12 @@ def find_interception_normal_shooting_nextpoint_tangent(
     ----------
     trajectory_points : np.ndarray
         Array of shape (N, 2) containing 2D trajectory points in [x, y] format.
-    knn_indices : list of list of int
+    nearest_lane_point_index : list of list of int
         For each trajectory point, a list containing indices of its K nearest
         neighbors in the map_points array.
     map_points : np.ndarray
         Array of shape (M, 2) containing 2D map points.
-    map_next_points : np.ndarray
+    map_neighbour_points : np.ndarray
         Array of shape (M, 2) containing the next point for each map point,
         used to define line segments. Should have same length as map_points.
 
@@ -224,53 +226,43 @@ def find_interception_normal_shooting_nextpoint_tangent(
 
     for i, p in enumerate(trajectory_points):
         # Estimate tangent direction from trajectory
-        if 0 < i < len(trajectory_points) - 1:
+        if 0 < i < len(trajectory_points) - 1:#Middle point
             tangent_traj = trajectory_points[i + 1] - trajectory_points[i - 1]
-        elif i < len(trajectory_points) - 1:
+        elif i == len(trajectory_points) - 1:#Last point
+            tangent_traj = p-trajectory_points[i - 1]
+        elif i == 0:#First point
             tangent_traj = trajectory_points[i + 1] - p
-        elif i > 0:
-            tangent_traj = p - trajectory_points[i - 1]
-        else:
-            tangent_traj = np.array([1.0, 0.0])
-        norm = np.linalg.norm(tangent_traj)
-        if norm > 1e-10:
-            tangent_traj = tangent_traj / norm
-        else:
-            tangent_traj = np.array([1.0, 0.0])
-        normal_traj = np.array([-tangent_traj[1], tangent_traj[0]])  # Perpendicular to tangent
+        tangent_traj = tangent_traj / np.linalg.norm(tangent_traj)
+        normal_traj = np.array([tangent_traj[1], -tangent_traj[0]])  # Perpendicular to tangent
 
-        best_parallel = -np.inf
         best_intercept_point = np.nan
 
-        knn_idx = knn_indices[i]
-        for j in range(len(knn_idx)):
-            map_idx = knn_idx[j]
-            a = map_points[map_idx]
-            b = map_next_points[map_idx]
-            ab = b - a
-            # Check that ab is not degenerate
-            ab_norm = np.linalg.norm(ab)
-            if ab_norm < 1e-10:
-                continue
-            ab_unit = ab / ab_norm
+        nearest_lane_point_idx = nearest_lane_point_index[i]
+        options_nn=[]
+        for j in range(len(nearest_lane_point_idx)):
+            lanlet_point_idx = nearest_lane_point_idx[j]
+            lane_point = map_points[lanlet_point_idx]
+            neighbour_point = map_neighbour_points[lanlet_point_idx]
+            
+            ab = neighbour_point - lane_point
             # Find intersection of normal_traj at p with the segment ab
             # Solve: a + t * ab = p + s * normal_traj
             # => t * ab - s * normal_traj = (p - a)
             A = np.column_stack((ab, -normal_traj))
             det = np.linalg.det(A)
             if abs(det) > 1e-10:
-                sol = np.linalg.inv(A) @ (p - a)
+                sol = np.linalg.inv(A) @ (p - lane_point)
                 t, s = sol[0], sol[1]
                 # Only accept intersection if t in [0,1] (segment)
-                if 0.0 <= t <= 1.0:
+                if 0.0 <= t <= 1.0:# There is an intersection
                     # Compute parallelism (dot product, higher is more parallel)
-                    parallel_score = abs(np.dot(ab_unit, tangent_traj))
-                    if parallel_score > best_parallel and parallel_score>=0.7:
-                        best_parallel = parallel_score
-                        proj = a + t * ab
+                    parallel_score = np.dot(tangent_traj, lanelet_direction_points[lanlet_point_idx])
+                    if parallel_score>=0.9:
+                        proj = lane_point + t * ab
+                        # options_nn.append(proj)
                         best_intercept_point = proj
-                        if parallel_score>=0.95: #no need to check more, choose closest 
-                            break
+                        break
+                        # options_nn.append(proj)
 
         intercept_points[i] = best_intercept_point
 
@@ -715,7 +707,7 @@ def find_k_closest_neighbors_for_points(
     return np.array(closest_indices)
 
 
-def lane_points_and_it_nn(lanelet_map: lanelet2.core.LaneletMap , min_dist: float = 3.0) -> Tuple[np.ndarray, np.ndarray]:
+def lanelet_points_and_neighbour(lanelet_map: lanelet2.core.LaneletMap , min_dist: float = 3.0) -> Tuple[np.ndarray, np.ndarray]:
     """
     Build the lanelet point list and its next-point associations.
     It ignores points that are too close to the previous point, defined by min_dist.
@@ -731,32 +723,39 @@ def lane_points_and_it_nn(lanelet_map: lanelet2.core.LaneletMap , min_dist: floa
     -------
     lane_points : np.ndarray
         Array of shape (N, 2) containing the lane points.
-    lane_points_next : np.ndarray
+    lane_points_neighbour : np.ndarray
         Array of shape (N, 2) containing the next lane points.
     """
-    lane_points_next = []
+    lane_points_neighbour = []
     lane_points = []
-    
-    for lanelet in lanelet_map.laneletLayer:
-        prev_point = None
-        centerline = lanelet.centerline
-        aux_points = []
-        for i, point in enumerate(centerline):
-            corrected_point = np.array([point.x, point.y])
-            if prev_point is not None:
-                if np.linalg.norm(corrected_point - prev_point) < min_dist:
-                    continue
-            prev_point = corrected_point
-            aux_points.append(corrected_point)
-        lane_points.extend(aux_points)
-        
-        # Create next-point associations for tangent computation
-        for i in range(len(aux_points)):
-            nn = None
-            if i < len(aux_points) - 1:
-                nn = aux_points[i + 1]
-            else:
-                nn = aux_points[i - 1]
-            lane_points_next.append(nn)
+    lanelet_direction_points=[]
 
-    return lane_points, lane_points_next
+    for lanelet in lanelet_map.laneletLayer:
+        prev_point = []
+        new_centerline = []
+        for point in lanelet.centerline:
+            lane_point_xy = np.array([point.x, point.y])
+            if len(prev_point) > 0:
+                if np.linalg.norm(lane_point_xy - prev_point) < min_dist:
+                    continue
+            prev_point = lane_point_xy
+            new_centerline.append(lane_point_xy)
+
+        lane_points.extend(new_centerline)
+        # Create next-point associations for tangent computation
+        for i in range(len(new_centerline)):
+            neigbour = None
+            if i < len(new_centerline) - 1:
+                neigbour = new_centerline[i + 1]
+                tangent=neigbour-new_centerline[i]
+            else:
+                neigbour = new_centerline[i - 1]
+                tangent=new_centerline[i]-neigbour
+
+            tangent=tangent/np.linalg.norm(tangent)
+  
+            lanelet_direction_points.append(tangent)
+            lane_points_neighbour.append(neigbour)
+
+    return np.array(lane_points), np.array(lane_points_neighbour), np.array(lanelet_direction_points)
+
