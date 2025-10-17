@@ -17,7 +17,6 @@ from lanelet2.core import GPSPoint, BasicPoint3d
 from scipy.spatial.transform import Rotation
 import numpy as np
 from typing import List
-from scipy.spatial import cKDTree
 import json
 
 #Local libraries
@@ -31,7 +30,7 @@ from osm_align import OdomCorrector
 INS_TOPIC = "/Inertial_Labs/ins_data" #Topic for INS data
 INS2ODOM_TOPIC = "osm_align/ins_data2_odom" #Convert to UTM
 MAP_MARKER_TOPIC = "osm_align/map_markers" #Topic for lanelet markers
-ODOM_ALIGNED_TOPIC = 'osm_align/odom_aligned' #Topic for aligned odometry
+ODOM_ALIGNED_TOPIC = 'osm_align/odom' #Topic for aligned odometry
 CAR_GEOJSON_TOPIC = 'osm_align/car_geojson' #Topic for odom corrected in gps string
 
 
@@ -163,13 +162,17 @@ class HelsinkiNode(Node):
         """
         pose_corrected, message=self.trajectory_correction.apply(self.tf_to_utm@utils.pose_to_4x4(msg.pose.pose))
         if message==0:
-            self.get_logger().debug(f"frame {self.frame_count} trajectory length < {self.min_distance_threshold}, skip ICP")
+            self.get_logger().info(f"frame {self.frame_count} trajectory length < {self.min_distance_threshold}, skip ICP")
         elif message==1:
-            self.get_logger().debug(f"frame {self.frame_count} ICP error > {self.icp_error_threshold}, skip ICP")
-        elif message==-1:
-            pass
-        else:
-            self.get_logger().debug(f"frame {self.frame_count} ICP error < {message}, ICP success")
+            self.get_logger().info(f"frame {self.frame_count} valid correspondences < {self.valid_correspondence_threshold}, skip ICP")
+        elif message==2:
+            self.get_logger().info(f"frame {self.frame_count} ICP error < {self.icp_error_threshold}, ICP success")
+        elif message==3 :
+            self.get_logger().info(f"frame {self.frame_count} ICP error > {self.icp_error_threshold}, ICP success")
+        elif message==4 :
+            self.get_logger().info(f"frame {self.frame_count} RESET")
+        elif message==5 :
+            self.get_logger().info(f"frame {self.frame_count} Not enought points to align")
 
         self.frame_count += 1
 
@@ -260,8 +263,8 @@ class HelsinkiNode(Node):
 
         odom = Odometry()
         odom.header.stamp = msg.header.stamp
-        odom.header.frame_id = "map"
-        odom.child_frame_id = "odom"
+        odom.header.frame_id = "odom"
+        odom.child_frame_id = "base_link"
         odom.pose.pose.position.x = float(utm_point.x)
         odom.pose.pose.position.y = float(utm_point.y)
         odom.pose.pose.position.z = float(utm_point.z)
@@ -377,9 +380,9 @@ class HelsinkiNode(Node):
             'trimming_ratio': self.trimming_ratio,
             'min_distance_threshold': self.min_distance_threshold,
         }
-        print(f"lanelet_map: {self.lanelet_map}")
-        lane_points, lane_points_nn = utils.lane_points_and_it_nn(self.lanelet_map)
-        self.trajectory_correction=OdomCorrector(lane_points, lane_points_nn, cKDTree(lane_points), args)
+        
+        self.trajectory_correction=OdomCorrector(self.lanelet_map, args)
+        self.get_logger().info(f"OdomCorrector initialized")
 
 
 

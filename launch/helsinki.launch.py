@@ -124,8 +124,14 @@ def generate_launch_description():
             parameters=[{'use_sim_time': True}],  # same as <param name="use_sim_time" value="true"/>
             output='screen'
     )
-
-
+    tf_map_to_odom =Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='map_to_odom',
+            arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
+            parameters=[{'use_sim_time': True}],  # same as <param name="use_sim_time" value="true"/>
+            output='screen'
+    )
 
     return LaunchDescription([
         declare_map_lanelet_path,
@@ -137,6 +143,7 @@ def generate_launch_description():
         declare_trimming_ratio,
         declare_min_distance_threshold,
         tf_base_link_to_lidar,
+        tf_map_to_odom,
         helsinki_node,
         bridge_socket,
         # liodom_launch,
