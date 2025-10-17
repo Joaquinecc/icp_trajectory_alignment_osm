@@ -3,10 +3,14 @@ import numpy as np
 from typing import List, Optional, Dict, Any
 from scipy.spatial import cKDTree
 # from geometry_msgs.msg import Pose  # Not used here; keep minimal deps
-import osm_align.utils.utils as utils
-
+try:
+    import osm_align.utils.utils as utils
+except:
+    import utils.utils as utils
+import lanelet2
 # Configuration parameters are now declared as ROS parameters in the node
 
+MAX_ERROR_CONSECUTIVE=150      
 
 class OdomCorrector():
     """
@@ -22,7 +26,7 @@ class OdomCorrector():
     ----------
     lane_points : numpy.ndarray or None
         Array of shape (N, 2) with lane centerline points in meters.
-    lane_points_next : numpy.ndarray or None
+    lane_points_neighbour : numpy.ndarray or None
         Array of shape (N, 2) with "next" point associations for each
         centerline point, used to compute local tangents.
     lane_kdtree : scipy.spatial.cKDTree or None
@@ -41,15 +45,14 @@ class OdomCorrector():
 
     def __init__(
         self,
-        lane_points: Optional[np.ndarray],
-        lane_points_next: Optional[np.ndarray],
-        lane_kdtree: Optional[cKDTree],
+        lanelet_map: lanelet2.core.LaneletMap,
         args: Dict[str, Any]
     ) -> None:
         # super().__init__('odometry_corrector')
-        self.lane_points: Optional[np.ndarray] = lane_points
-        self.lane_points_next: Optional[np.ndarray] = lane_points_next
-        self.lane_kdtree: Optional[cKDTree] = lane_kdtree
+
+        self.lanelet_map = lanelet_map
+        self.lane_points, self.lane_points_neighbour,self.lanelet_direction_points = utils.lanelet_points_and_neighbour(self.lanelet_map)
+        self.lane_kdtree: Optional[cKDTree] = cKDTree(self.lane_points)
 
         self.pose_segment_size: int = args['pose_segment_size']
         self.knn_neighbors: int = args['knn_neighbors']
@@ -57,10 +60,10 @@ class OdomCorrector():
         self.icp_error_threshold: float = args['icp_error_threshold']
         self.trimming_ratio: float = args['trimming_ratio']
         self.min_distance_threshold: float = args['min_distance_threshold']
-
         #Initialize variables
         self.pose_segment: List[np.ndarray] = []
         self.delta_t_acc = np.eye(4)
+        self.error_consecutive=0
 
     def align_pose(self) -> None:
         """
@@ -79,36 +82,39 @@ class OdomCorrector():
           by the ICP update.
         - Early exits if the traversed path length within the window is
           below `min_distance_threshold`.
+
+        Return:
+            0: trajectory length < min_distance_threshold
+            1: valid correspondences < valid_correspondence_threshold
+            2: ICP error < icp_error_threshold
         """
+        trajectory_points_xy = np.array([[pose[0, -1], pose[1, -1]] for pose in self.pose_segment])# Xand Y points
+        trajectory_distance = np.sum(np.linalg.norm(np.diff(trajectory_points_xy, axis=0), axis=1))
         
-        trajectory_points = np.array([[pose[0, -1], pose[1, -1]] for pose in self.pose_segment])
-        total_distance = np.sum(np.linalg.norm(np.diff(trajectory_points, axis=0), axis=1))
-        
-        if total_distance < self.min_distance_threshold:
-            # self.get_logger().info(f"frame {self.frame_count} total_distance: {total_distance} < {self.min_distance_threshold}, skip ICP")
+        if trajectory_distance < self.min_distance_threshold:
             return 0
             
-        knn_index = self.lane_kdtree.query(trajectory_points, k=self.knn_neighbors)[1]
+        _,knn_index = self.lane_kdtree.query(trajectory_points_xy, k=self.knn_neighbors)
         best_lane_points = utils.find_interception_normal_shooting_nextpoint_tangent(
-            trajectory_points, knn_index, self.lane_points, self.lane_points_next
+            trajectory_points_xy, knn_index, self.lane_points, self.lane_points_neighbour, self.lanelet_direction_points
         )
+
         valid_mask = ~np.isnan(best_lane_points).any(axis=1)
+        # return best_lane_points[valid_mask]
 
         if valid_mask.sum() < len(self.pose_segment) * self.valid_correspondence_threshold:
-            # self.get_logger().info(f"frame {self.frame_count} ({valid_mask.sum()}) Not enough valid correspondences for ICP alignment")
-            return
-
+            return 1
         R_total, T_total, final_error = utils.solve_trimmed_icp_2d(
-            trajectory_points[valid_mask], 
+            trajectory_points_xy[valid_mask], 
             best_lane_points[valid_mask], 
             trimming_ratio=self.trimming_ratio,
         )
-        if final_error < self.icp_error_threshold:
-            # self.get_logger().info(f"Pass threshold, ICP final error: {final_error}")
 
+
+        if final_error < self.icp_error_threshold:
             # Apply 2D transformation to pose history
             pose_segment = []
-            for pose in self.pose_segment:
+            for pose in self.pose_segment:  
                 point_xy = np.array([pose[0, -1], pose[1, -1]])
                 point_xy = R_total @ point_xy + T_total
                 pose[0, -1] = point_xy[0]
@@ -116,17 +122,17 @@ class OdomCorrector():
                 # pose[2, -1] remains unchanged
                 pose_segment.append(pose)
             self.pose_segment = pose_segment
-            
-            #Update delta_t_acc
+
+            #Update delta_t_acc 
             self.delta_t_acc[:2, -1] = R_total @ self.delta_t_acc[:2, -1] + T_total
             self.delta_t_acc[:2, :2] = R_total @ self.delta_t_acc[:2, :2]
 
-            return final_error
-        else:
-            # self.get_logger().info(f"Fail threshold, ICP final error: {final_error}")
             return 2
+        else:
+            return 3
+        
 
-    def apply(self, pose: np.ndarray) -> np.ndarray:
+    def apply(self, pose_received: np.ndarray) -> np.ndarray:
         """
         Apply the accumulated 2D correction to a new pose and update history.
 
@@ -141,17 +147,23 @@ class OdomCorrector():
         numpy.ndarray
             The corrected 4x4 pose matrix (same object instance as the input).
         """
-        
-        point_xy =  np.array([pose[0, -1], pose[1, -1]])
-        point_xy = self.delta_t_acc[:2, :2] @ point_xy + self.delta_t_acc[:2, -1]
-        pose[0, -1] = point_xy[0]
-        pose[1, -1] = point_xy[1]
+        pose=pose_received.copy()
+        pose[:2, -1] = self.delta_t_acc[:2, :2] @ pose_received[:2, -1] + self.delta_t_acc[:2, -1]
         self.pose_segment.append(pose)
-        message=-1
+        message=5
         if len(self.pose_segment) == self.pose_segment_size:
             message=self.align_pose()
             self.pose_segment.pop(0)
-        
+            if message in  [1, 3, 4, 5]:
+                self.error_consecutive+=1
+            else:
+                self.error_consecutive=0
+
+            if self.error_consecutive > MAX_ERROR_CONSECUTIVE: #RESET
+                self.error_consecutive=0
+                self.pose_segment=[pose]
+                self.delta_t_acc=np.eye(4)
+                message=4 #RESET
         return self.pose_segment[-1], message
 
 
