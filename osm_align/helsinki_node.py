@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.duration import Duration
 from nav_msgs.msg import Odometry
-from inertiallabs_msgs.msg import InsData   
+from inertiallabs_msgs.msg import InsData,GpsData 
 from rclpy.qos import QoSProfile, QoSHistoryPolicy, QoSDurabilityPolicy, ReliabilityPolicy
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
@@ -18,6 +18,7 @@ from scipy.spatial.transform import Rotation
 import numpy as np
 from typing import List
 import json
+import os
 
 #Local libraries
 from osm_align.utils import utils
@@ -64,6 +65,7 @@ class HelsinkiNode(Node):
         self.get_logger().info("Helsinki node initialized")
         self.declare_parameter('odom_topic', '/liodom/odom')
         self.declare_parameter('map_lanelet_path', '')
+        self.declare_parameter('save_resuts_path', '/home/joaquinecc/Documents/ros_projects/src/osm_align/osm_align/')
 
         #Odom Correction Parameters
         self.declare_parameter('pose_segment_size', 100)
@@ -87,6 +89,7 @@ class HelsinkiNode(Node):
         self.trimming_ratio: float = self.get_parameter('trimming_ratio').get_parameter_value().double_value
         self.min_distance_threshold: float = self.get_parameter('min_distance_threshold').get_parameter_value().double_value
         self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
+        self.save_resuts_path: str = self.get_parameter('save_resuts_path').get_parameter_value().string_value
 
         # Log info: print odom_topic and map_lanelet_path
         self.get_logger().info(f"odom_topic: {self.odom_topic}")
@@ -105,7 +108,7 @@ class HelsinkiNode(Node):
         self._utm_projector = None # UTM projector
         self._utm_origin = None  # UTM origin (lat, lon, alt)
         self.frame_count = 0 # Frame count
-
+        self.poses_history = [] # Pose history
 
         #QOS Settings
         qos = QoSProfile(
@@ -180,15 +183,10 @@ class HelsinkiNode(Node):
         pose_recived=msg.pose.pose
         pose_recived.position.x=pose_corrected[0, -1]
         pose_recived.position.y=pose_corrected[1, -1]
-        pose_recived.position.z=pose_corrected[2, -1]
-        pose_recived.orientation.x=pose_corrected[0, 0]
-        pose_recived.orientation.y=pose_corrected[1, 0]
-        pose_recived.orientation.z=pose_corrected[2, 0]
-        pose_recived.orientation.w=pose_corrected[3, 0]
         self.publish_odom(pose_recived)
         self.publish_corrected_gps(pose_recived)
    
-    def ins_callback(self, msg: InsData):
+    def ins_callback(self, msg):
         """
         Convert the INS data to UTM and publish the aligned odometry.
         Initialize the UTM projector with the first received LLH as origin.
@@ -202,64 +200,46 @@ class HelsinkiNode(Node):
             INS data to convert to UTM.
 
         """
-        # Initialize projector with the first received LLH as origin
+        lat0 = float(msg.llh.x)
+        lon0 = float(msg.llh.y)
+        alt0 = float(msg.llh.z)
+            
+        if hasattr(msg, 'ypr'):
+            yaw_deg = float(msg.ypr.x)
+            pitch_deg = float(msg.ypr.y)    
+            roll_deg = float(msg.ypr.z)
+            
+        else:
+            yaw_deg = 0.0
+            pitch_deg = 0.0
+            roll_deg = 0.0
+        
+        self.get_logger().info(f"Angle of rotation: {yaw_deg}, {pitch_deg}, {roll_deg}")
+        #Initialize UTM
         if self._utm_projector is None:
-            # self.get_logger().info(f"First INS message received {msg}")
-            lat0 = float(msg.llh.x)
-            lon0 = float(msg.llh.y)
-            alt0 = float(msg.llh.z)
-            self._utm_origin = (lat0, lon0, alt0)
+
+            self._utm_origin = (lat0, lon0)
             self._utm_projector = lanelet2.projection.UtmProjector(
-                lanelet2.io.Origin(lat0, lon0, alt0)
+                lanelet2.io.Origin(lat0, lon0)
             )
             self.get_logger().info(
                 f"Initialized UTM projector with origin lat={lat0:.8f}, lon={lon0:.8f}, alt={alt0:.2f}"
             )
             self.lanelet_map = lanelet2.io.load(self.map_lanelet_path, self._utm_projector)
             self.get_logger().info(f"Lanelet map loaded from: {self.map_lanelet_path}")
-
-
-
-            # Initialize the transformation matrix to convert from odom to utm
-            theta = np.deg2rad(150)
-            self.tf_lidar_to_base_link=np.eye(4)
-            # self.tf_lidar_to_base_link[:3, :3] =np.array([
-            # [1, 0, 0],
-            # [0, np.cos(theta), -np.sin(theta)],
-            # [0, np.sin(theta), np.cos(theta)]
-            # ])
-
-            self.tf_lidar_to_base_link[:3, :3] =np.array([
-            [np.cos(theta), -np.sin(theta), 0],
-            [np.sin(theta),  np.cos(theta), 0],
-            [0,              0,             1]
-            ])
-
             self.tf_to_utm=np.eye(4)
-
-            # yaw_deg = float(msg.ypr.x)
-            # pitch_deg = float(msg.ypr.y)    
-            # roll_deg = float(msg.ypr.z)
-            # r = Rotation.from_euler('zyx', [yaw_deg, pitch_deg, roll_deg], degrees=True)
-            # self.tf_to_utm[:3, :3] = r.as_matrix()
-
-            self.tf_to_utm=self.tf_to_utm@self.tf_lidar_to_base_link
-            self.get_logger().info(f"tf_to_utm: {self.tf_to_utm}")
 
             # Initialize the OdomCorrector object.
             self._initialize_odom_correction()
             # Publish the lanelet markers for RVIZ visualization
             self.publish_lanelet_markers()
 
-        # Project current LLH to UTM meters
-        gps_point = GPSPoint(float(msg.llh.x), float(msg.llh.y), float(msg.llh.z))
-        utm_point = self._utm_projector.forward(gps_point)
+     
 
-        # Convert YPR (deg) to quaternion (x, y, z, w) assuming yaw->Z, pitch->Y, roll->X
-        yaw_deg = float(msg.ypr.x)
-        pitch_deg = float(msg.ypr.y)    
-        roll_deg = float(msg.ypr.z)
-        quat_xyzw = Rotation.from_euler('zyx', [yaw_deg, pitch_deg, roll_deg], degrees=True).as_quat()
+
+        gps_point = GPSPoint(lat0,lon0,alt0)
+        utm_point = self._utm_projector.forward(gps_point)
+        quat_xyzw = Rotation.from_euler('zxy', [yaw_deg+90, pitch_deg, roll_deg], degrees=True).as_quat()
 
         odom = Odometry()
         odom.header.stamp = msg.header.stamp
@@ -323,6 +303,7 @@ class HelsinkiNode(Node):
         odom_msg.header.stamp = self.get_clock().now().to_msg()
         odom_msg.pose.pose=pose
         self.publisher_odom.publish(odom_msg)
+        self.poses_history.append(utils.pose_to_4x4(pose))
 
         self.get_logger().debug(f"frame {self.frame_count} pose: {pose.position.x}, {pose.position.y}, {pose.position.z}")
         
@@ -347,7 +328,7 @@ class HelsinkiNode(Node):
         markers = MarkerArray()
         for idx, line in enumerate(centerlines):
             marker = Marker()
-            marker.header.frame_id = "map"
+            marker.header.frame_id = "odom"
             marker.header.stamp.sec = 0
             marker.header.stamp.nanosec = 0
             marker.ns = 'lanelet_centerlines'
@@ -384,11 +365,39 @@ class HelsinkiNode(Node):
         self.trajectory_correction=OdomCorrector(self.lanelet_map, args)
         self.get_logger().info(f"OdomCorrector initialized")
 
+    def save_results(self) -> None:
+        """Save pose history and alignment runtimes if path is provided."""
+        if not self.save_resuts_path or not self.save_resuts_path.strip():
+            return
+        try:
+            self.save_resuts_path=os.path.join(self.save_resuts_path)
+            os.makedirs(self.save_resuts_path, exist_ok=True)
+            poses_path = os.path.join(self.save_resuts_path, 'poses.txt')
+            with open(poses_path, 'w') as f:
+                for M in self.poses_history:
+                    vals = M.reshape(-1)
+                    f.write(' '.join(f'{v:.12f}' for v in vals) + '\n')
+            self.get_logger().info(f"Saved results to: {self.save_resuts_path}")
+        except Exception as e:
+            self.get_logger().warn(f"Failed to save results: {e}")
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = HelsinkiNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    # rclpy.spin(node)
+    # node.destroy_node()
+    # rclpy.shutdown()
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        node.get_logger().info("Node interrupted by user")
+    finally:
+        # Save results if requested
+        try:
+            node.save_results()
+        except Exception:
+            pass
+        node.destroy_node()
+        rclpy.shutdown()
