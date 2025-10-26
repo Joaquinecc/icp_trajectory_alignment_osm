@@ -726,36 +726,42 @@ def lanelet_points_and_neighbour(lanelet_map: lanelet2.core.LaneletMap , min_dis
     lane_points_neighbour : np.ndarray
         Array of shape (N, 2) containing the next lane points.
     """
+    d2 = float(min_dist) ** 2 # Is cheeaper to compare squared distances than the actual distances
     lane_points_neighbour = []
     lane_points = []
     lanelet_direction_points=[]
 
     for lanelet in lanelet_map.laneletLayer:
-        prev_point = []
-        new_centerline = []
-        for point in lanelet.centerline:
-            lane_point_xy = np.array([point.x, point.y])
-            if len(prev_point) > 0:
-                if np.linalg.norm(lane_point_xy - prev_point) < min_dist:
-                    continue
-            prev_point = lane_point_xy
-            new_centerline.append(lane_point_xy)
+        
+        centerline_points = np.array([(p.x, p.y) for p in lanelet.centerline], dtype=np.float64)
+        # Distance-based thinning in one pass (compare squared distances)
+        keep_idx = [0]
+        last = centerline_points[0]
+        for i in range(1, centerline_points.shape[0]):
+            v = centerline_points[i]
+            dx = v[0] - last[0]
+            dy = v[1] - last[1]
+            if dx*dx + dy*dy >= d2: #Square distance comparison
+                keep_idx.append(i)  
+                last = v
 
-        lane_points.extend(new_centerline)
+        centerline_points = centerline_points[keep_idx]
+
+
         # Create next-point associations for tangent computation
-        for i in range(len(new_centerline)):
-            neigbour = None
-            if i < len(new_centerline) - 1:
-                neigbour = new_centerline[i + 1]
-                tangent=neigbour-new_centerline[i]
-            else:
-                neigbour = new_centerline[i - 1]
-                tangent=new_centerline[i]-neigbour
+        neighbours = centerline_points.copy()
+        neighbours[:-1] = centerline_points[1:]          # forward neighbour
+        if len(centerline_points) > 1:
+            neighbours[-1] = centerline_points[-2]           # last points to previous
+        diffs = neighbours - centerline_points #Always diff with ther consecutive point
+        diffs[-1] = centerline_points[-1]-neighbours[-1]  #Except the last point, which is diff with the previous point
+        norms = np.linalg.norm(diffs, axis=1, keepdims=True)
+        np.maximum(norms, 1e-12, out=norms)   # avoid division by zero
+        tangents = diffs / norms
 
-            tangent=tangent/np.linalg.norm(tangent)
-  
-            lanelet_direction_points.append(tangent)
-            lane_points_neighbour.append(neigbour)
+        lane_points.extend(centerline_points)
+        lanelet_direction_points.extend(tangents)
+        lane_points_neighbour.extend(neighbours)
 
     return np.array(lane_points), np.array(lane_points_neighbour), np.array(lanelet_direction_points)
 
