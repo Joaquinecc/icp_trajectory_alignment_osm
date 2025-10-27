@@ -3,12 +3,13 @@
 import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch.actions import ExecuteProcess
 from launch.actions import IncludeLaunchDescription
+from launch.substitutions import PythonExpression
 from launch.launch_description_sources import AnyLaunchDescriptionSource
-from launch.actions import TimerAction
 from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
@@ -57,7 +58,13 @@ def generate_launch_description():
         default_value='10.0',
         description='Min distance threshold'
     )
+    declare_viz = DeclareLaunchArgument(
+        'viz',
+        default_value='True',
+        description='Viz'
+    )
 
+    
     helsinki_node = Node(
         package='osm_align',
         executable='helsinki_node',
@@ -84,35 +91,39 @@ def generate_launch_description():
                 "launch",
                 "liodom_ouster_launch.xml",
             )
+            
         ),
         launch_arguments={
             'viz': 'false',
             'mapping': 'false',
             'use_imu': 'true',
-        }.items()
+        }.items(),
+        condition=IfCondition(
+            PythonExpression(["'liodom' in '", LaunchConfiguration('odom_topic'), "'"])
+        )
     )
-    # Delay start by 5 seconds:
-    delayed_liodom_launch = TimerAction(
-        period=8.0,  # seconds
-        actions=[liodom_launch]
-    )
+
     # rviz2 node
     rviz2 = Node(
         package='rviz2',
         executable='rviz2',
         name='rviz2',
         arguments=['-d', os.path.join(get_package_share_directory("osm_align"), "rviz", "helsinki.rviz")],
-        output='screen'
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('viz'))  
     )
 
     play_ros_bag = ExecuteProcess(
-        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_file'), '--delay', '3', '--rate', '1.0','--start-offset', '0'],
-        output='screen'
+        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_file'), '--delay', '1', '--rate', '1.0','--start-offset', '0'],
+        output='screen',
+         condition=IfCondition(LaunchConfiguration('viz'))
+
     )
 
     bridge_socket = ExecuteProcess(
         cmd=['ros2', 'launch', 'rosbridge_server', 'rosbridge_websocket_launch.xml'],
-        output='screen'
+        output='screen',
+         condition=IfCondition(LaunchConfiguration('viz'))
     )
 
     
@@ -120,8 +131,8 @@ def generate_launch_description():
             package='tf2_ros',
             executable='static_transform_publisher',
             name='base_link_to_lidar',
-            arguments=['0', '0', '0', '0', '0', '0', 'os_lidar', 'base_link'],
-            parameters=[{'use_sim_time': True}],  # same as <param name="use_sim_time" value="true"/>
+            arguments=['0', '0', '0', '-1.5708', '0', '0', 'os_lidar', 'base_link'],
+            parameters=[{'use_sim_time': True}], 
             output='screen'
     )
     tf_map_to_odom =Node(
@@ -129,7 +140,7 @@ def generate_launch_description():
             executable='static_transform_publisher',
             name='map_to_odom',
             arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
-            parameters=[{'use_sim_time': True}],  # same as <param name="use_sim_time" value="true"/>
+            parameters=[{'use_sim_time': True}], 
             output='screen'
     )
 
@@ -142,14 +153,19 @@ def generate_launch_description():
         declare_icp_error_threshold,
         declare_trimming_ratio,
         declare_min_distance_threshold,
+        declare_viz,
+        declare_bag_file,
+        #Viz
+        bridge_socket,
+        rviz2 ,
+        play_ros_bag,
+        #TFs
         tf_base_link_to_lidar,
         tf_map_to_odom,
+       #Nodes
         helsinki_node,
-        bridge_socket,
-        # liodom_launch,
-        delayed_liodom_launch,
-        rviz2,
-        play_ros_bag,
+        liodom_launch,
+
     ])
 
 

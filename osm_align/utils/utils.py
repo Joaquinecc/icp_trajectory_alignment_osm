@@ -4,7 +4,7 @@ from typing import List, Tuple, Union, Optional
 # from geometry_msgs.msg import Pose
 import numpy as np
 import lanelet2
-
+import math
 def pose_to_4x4(pose) -> np.ndarray:
     """
     Convert geometry_msgs/Pose to a 4x4 homogeneous transformation matrix.
@@ -21,11 +21,9 @@ def pose_to_4x4(pose) -> np.ndarray:
     """
     from geometry_msgs.msg import Pose
     quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
-    R3 = Rotation.from_quat(quat).as_matrix()
-    t = np.array([pose.position.x, pose.position.y, pose.position.z])
     M = np.eye(4)
-    M[:3, :3] = R3
-    M[:3, 3] = t
+    M[:3, :3] = Rotation.from_quat(quat).as_matrix()
+    M[:3, 3] =  np.array([pose.position.x, pose.position.y, pose.position.z])
     return M
 
 def pose_to_homogenous_matrix(R: np.ndarray, T: np.ndarray) -> np.ndarray:
@@ -764,4 +762,43 @@ def lanelet_points_and_neighbour(lanelet_map: lanelet2.core.LaneletMap , min_dis
         lane_points_neighbour.extend(neighbours)
 
     return np.array(lane_points), np.array(lane_points_neighbour), np.array(lanelet_direction_points)
+
+def rotation_angle_2d(ref_point, target_point):
+    """
+    Compute the 2D rotation angle (degrees) between two vectors.
+    
+    Parameters
+    ----------
+    ref_point : tuple or list (x, y)
+        The reference vector in the first frame.
+    target_point : tuple or list (x, y)
+        The corresponding vector in the rotated frame.
+    
+    Returns
+    -------
+    float
+        Rotation angle in degrees (positive = counterclockwise).
+    """
+    x, y = ref_point
+    xp, yp = target_point
+
+    # dot and cross (scalar in 2D)
+    dot = x * xp + y * yp
+    cross = x * yp - y * xp
+
+    # norms
+    norm_ref = math.hypot(x, y)
+    norm_target = math.hypot(xp, yp)
+
+    # cosine and sine of the angle
+    cos_theta = dot / (norm_ref * norm_target)
+    sin_theta = cross / (norm_ref * norm_target)
+
+    # clamp cos_theta for numerical safety
+    cos_theta = max(min(cos_theta, 1.0), -1.0)
+
+    angle_rad = math.atan2(sin_theta, cos_theta)
+    angle_deg = math.degrees(angle_rad)
+    return angle_deg
+
 
