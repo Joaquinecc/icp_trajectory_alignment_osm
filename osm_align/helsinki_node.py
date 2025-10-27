@@ -34,6 +34,8 @@ MAP_MARKER_TOPIC = "osm_align/map_markers" #Topic for lanelet markers
 ODOM_ALIGNED_TOPIC = 'osm_align/odom' #Topic for aligned odometry
 CAR_GEOJSON_TOPIC = 'osm_align/car_geojson' #Topic for odom corrected in gps string
 
+LIODOM_ORIENTATION_CORRECTOR=np.eye(4)
+LIODOM_ORIENTATION_CORRECTOR[:3,:3]=Rotation.from_euler("z",np.pi).as_matrix()
 
 class HelsinkiNode(Node):
     """
@@ -74,6 +76,7 @@ class HelsinkiNode(Node):
         self.declare_parameter('icp_error_threshold', 2.0)
         self.declare_parameter('trimming_ratio', 0.2)
         self.declare_parameter('min_distance_threshold', 10.0)
+        self.declare_parameter('calc_enu_yaw_offset', True)
 
 
         self.map_lanelet_path: str = self.get_parameter('map_lanelet_path').get_parameter_value().string_value
@@ -90,7 +93,7 @@ class HelsinkiNode(Node):
         self.min_distance_threshold: float = self.get_parameter('min_distance_threshold').get_parameter_value().double_value
         self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.save_resuts_path: str = self.get_parameter('save_resuts_path').get_parameter_value().string_value
-
+        self.calc_enu_yaw_offset: bool = self.get_parameter('calc_enu_yaw_offset').get_parameter_value().bool_value
         # Log info: print odom_topic and map_lanelet_path
         self.get_logger().info(f"odom_topic: {self.odom_topic}")
         self.get_logger().info(f"map_lanelet_path: {self.map_lanelet_path}")
@@ -101,7 +104,7 @@ class HelsinkiNode(Node):
         self.get_logger().info(f"trimming_ratio: {self.trimming_ratio}")
         self.get_logger().info(f"min_distance_threshold: {self.min_distance_threshold}")
         self.get_logger().info(f"Map lanelet path: {self.map_lanelet_path}")
-
+        self.get_logger().info(f"calc_enu_yaw_offset: {self.calc_enu_yaw_offset}")
 
 
         # Initialize variables
@@ -109,6 +112,10 @@ class HelsinkiNode(Node):
         self._utm_origin = None  # UTM origin (lat, lon, alt)
         self.frame_count = 0 # Frame count
         self.poses_history = [] # Pose history
+
+        #Initialize ENU yaw offset
+        self.enu_yaw_offset = 0.0 # in degrees
+        self.tf_to_utm=np.eye(4)
 
         #QOS Settings
         qos = QoSProfile(
@@ -163,7 +170,13 @@ class HelsinkiNode(Node):
         -----
         The odometry is corrected using the lanelet map.
         """
-        pose_corrected, message=self.trajectory_correction.apply(self.tf_to_utm@utils.pose_to_4x4(msg.pose.pose))
+    
+        pose_received=self.tf_to_utm@utils.pose_to_4x4(msg.pose.pose)
+        if "liodom" in self.odom_topic: #Currently Liodom is giving the orietnation rotated 180 degrees around z axis, this is temporal a workaround to correct it.
+            pose_received=pose_received@LIODOM_ORIENTATION_CORRECTOR
+
+        pose_corrected, message=self.trajectory_correction.apply(pose_received)
+
         if message==0:
             self.get_logger().info(f"frame {self.frame_count} trajectory length < {self.min_distance_threshold}, skip ICP")
         elif message==1:
@@ -183,6 +196,12 @@ class HelsinkiNode(Node):
         pose_recived=msg.pose.pose
         pose_recived.position.x=pose_corrected[0, -1]
         pose_recived.position.y=pose_corrected[1, -1]
+        quat_xyzw=Rotation.from_matrix(pose_corrected[:3,:3]).as_quat()
+
+        pose_recived.orientation.x=quat_xyzw[0]
+        pose_recived.orientation.y=quat_xyzw[1]
+        pose_recived.orientation.z=quat_xyzw[2]
+        pose_recived.orientation.w=quat_xyzw[3]
         self.publish_odom(pose_recived)
         self.publish_corrected_gps(pose_recived)
    
@@ -214,7 +233,8 @@ class HelsinkiNode(Node):
             pitch_deg = 0.0
             roll_deg = 0.0
         
-        self.get_logger().info(f"Angle of rotation: {yaw_deg}, {pitch_deg}, {roll_deg}")
+
+        self.get_logger().debug(f"Angle of rotation: {yaw_deg}, {pitch_deg}, {roll_deg}")
         #Initialize UTM
         if self._utm_projector is None:
 
@@ -227,19 +247,32 @@ class HelsinkiNode(Node):
             )
             self.lanelet_map = lanelet2.io.load(self.map_lanelet_path, self._utm_projector)
             self.get_logger().info(f"Lanelet map loaded from: {self.map_lanelet_path}")
-            self.tf_to_utm=np.eye(4)
-
             # Initialize the OdomCorrector object.
             self._initialize_odom_correction()
             # Publish the lanelet markers for RVIZ visualization
             self.publish_lanelet_markers()
 
-     
+
+
+        if self.calc_enu_yaw_offset: 
+            if len(self.poses_history) > 1:#We need at least two poses to calculate the yaw offset,since the first pose is the origin
+                ref_point= self._utm_projector.forward(GPSPoint(lat0, lon0, alt0))
+                ref_point = [ref_point.x, ref_point.y]
+                target_point= self.poses_history[-1][:2,-1]
+                yaw_offset= utils.rotation_angle_2d(ref_point, target_point)
+                self.enu_yaw_offset= yaw_offset
+                self.tf_to_utm[:3,:3] = Rotation.from_euler('z', [-self.enu_yaw_offset], degrees=True).as_matrix()
+                self.get_logger().info(f"tf_to_utm: {self.tf_to_utm}")
+                self.get_logger().info(f"enu_yaw_offset: {self.enu_yaw_offset} degrees")
+                self.calc_enu_yaw_offset = False #Set to False to avoid recalculating the yaw offset
 
 
         gps_point = GPSPoint(lat0,lon0,alt0)
         utm_point = self._utm_projector.forward(gps_point)
-        quat_xyzw = Rotation.from_euler('zxy', [yaw_deg+90, pitch_deg, roll_deg], degrees=True).as_quat()
+        quat_xyzw = Rotation.from_euler('zxy', [yaw_deg, pitch_deg, roll_deg], degrees=True).as_quat()
+
+            
+
 
         odom = Odometry()
         odom.header.stamp = msg.header.stamp
@@ -253,6 +286,8 @@ class HelsinkiNode(Node):
         odom.pose.pose.orientation.z = float(quat_xyzw[2])
         odom.pose.pose.orientation.w = float(quat_xyzw[3])
         self.ins2odom_pub.publish(odom)   
+
+
 
     def publish_corrected_gps(self, pose) -> None:
         """
