@@ -1,4 +1,6 @@
 <!doctype html>
+// Copyright 2025 Distance Technologies Oy. For internal use only.
+//
 <html>
 <head>
   <meta charset="utf-8" />
@@ -42,6 +44,8 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/roslib/build/roslib.min.js"></script>
 <script>
+  // Copyright 2025 Distance Technologies Oy. For internal use only.
+  //
   // Connect to rosbridge on localhost:9090 (change host if needed)
   const ros = new ROSLIB.Ros({url: 'ws://localhost:9090'});
 
@@ -57,10 +61,14 @@
   let first = true;
   let follow = true;  // start in follow mode
 
-  // Subscribe to GeoJSON topic
+  // Subscribe directly to NavSatFix topic (interpreted as object structure, not GeoJSON)
+  // Keeping topic name '/osm_align/car_geojson', type sensor_msgs/NavSatFix over rosbridge
   const gpsTopic = new ROSLIB.Topic({
-    ros, name: '/osm_align/car_geojson', messageType: 'std_msgs/String'
+    ros: ros,
+    name: '/Inertial_Labs/gps_data_std',
+    messageType: 'sensor_msgs/NavSatFix'
   });
+
   const path = L.polyline([], { weight: 3, opacity: 0.9,color:'green'}).addTo(map);
   const trail = [];
   const MAX_POINTS = 5000;           // cap to prevent unbounded growth
@@ -89,10 +97,12 @@
     return 2 * R * Math.asin(Math.sqrt(s));
   }
 
+  // GPS: message is ROS NavSatFix
   gpsTopic.subscribe(msg => {
     try {
-      const f = JSON.parse(msg.data);
-      const [lon, lat] = f.geometry.coordinates;
+      const lat = msg.latitude;
+      const lon = msg.longitude;
+      if (!lat || !lon) return;
       carIcon.setLatLng([lat, lon]);
       if (first) { map.setView([lat, lon], 20); first = false; }
       const ll = [lat, lon];
@@ -112,11 +122,6 @@
       console.error(e);
     }
   });
-
-
-
-
-// // ===== // ===== // ===== // ===== // =====  
 
   // ===== RAW IMAGE -> Canvas (sensor_msgs/Image, rgb8) =====
   const camCanvas = document.getElementById('camCanvas');
@@ -205,7 +210,7 @@
 
   // Throttle to ~10 FPS
   let lastFrameTs = 0;
-  const minFrameGapMs = 100;
+  const minFrameGapMs = 10;
   imageTopic.subscribe(msg => {
     const now = performance.now();
     if (now - lastFrameTs < minFrameGapMs) return;
@@ -217,8 +222,6 @@
       console.error(e);
     }
   });
-
-
 
 </script>
 </body>

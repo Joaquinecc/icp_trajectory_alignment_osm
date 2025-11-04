@@ -14,7 +14,7 @@ Arguments:
     --bbox            Bounding box as four floats: south west north east (optional, default is Helsinki area)
 
 Example:
-    python get_osm_lanlet.py --name dummy --folder_output ./output_folder --bbox 60.17 24.94 60.18 24.96
+    python get_osm_lanlet.py --name dummy --folder-output ./output_folder --bbox 60.17 24.94 60.18 24.96
 
 This will:
     - Download OSM data for the bounding box (60.17, 24.94, 60.18, 24.96)
