@@ -32,10 +32,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'kitti_node = osm_align.kitti_node:main',
-            'helsinki_node = osm_align.helsinki_node:main',
-            'viz_map_node = osm_align.viz_map_node:main',
-            'osm_trajectory_viz_node = osm_align.osm_trajectory_viz_node:main',
+            'lane_correction_node = osm_align.nodes.lane_correction_node:main',
+            'ins_conversion_node = osm_align.nodes.ins_conversion_node:main',
         ],
     },
 )

@@ -38,8 +38,7 @@ def main():
     parser.add_argument("--name", required=True, help="Name for the output files")
     parser.add_argument("--folder-output", required=True, help="Output folder")
     parser.add_argument("--bbox", nargs=4, type=float, metavar=('S', 'W', 'N', 'E'),
-                        default=[60.13271686171488, 24.821978584805642,
-                                 60.27175764979337, 25.061202762206708],
+                        default=[60.176021478825, 24.925027062444,60.186692008175, 24.952570024556],
                         help="Bounding box: south west north east")
     args = parser.parse_args()
 
@@ -50,7 +49,7 @@ def main():
     os.makedirs(folder_output, exist_ok=True)
     #|service can be added to the query 
     query = f"""
-    [timeout:180][out:xml][bbox:
+    [timeout:500][out:xml][bbox:
     {bbox[0]},{bbox[1]},
     {bbox[2]},{bbox[3]}
     ];
@@ -59,7 +58,6 @@ def main():
     (._;>;);
     out meta qt;
     """.strip()
-
     # Fetch OSM XML from Overpass
     r = requests.post(
         "https://overpass-api.de/api/interpreter",

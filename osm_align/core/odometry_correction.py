@@ -8,9 +8,10 @@ try:
 except:
     import utils.utils as utils
 import lanelet2
+import time
 # Configuration parameters are now declared as ROS parameters in the node
 
-MAX_ERROR_CONSECUTIVE=150      
+MAX_ERROR_CONSECUTIVE=30      
 
 class OdomCorrector():
     """
@@ -51,7 +52,12 @@ class OdomCorrector():
         # super().__init__('odometry_corrector')
 
         self.lanelet_map = lanelet_map
+
+        timer_cost = time.time()
         self.lane_points, self.lane_points_neighbour,self.lanelet_direction_points = utils.lanelet_points_and_neighbour(self.lanelet_map)
+        timer_cost = time.time()-timer_cost
+        print(f"Time taken to compute lanelet points and neighbours: {timer_cost} seconds")
+        
         self.lane_kdtree: Optional[cKDTree] = cKDTree(self.lane_points)
 
         self.pose_segment_size: int = args['pose_segment_size']
