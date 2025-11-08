@@ -12,7 +12,7 @@ from launch.actions import IncludeLaunchDescription
 from launch.substitutions import PythonExpression, TextSubstitution
 from launch.launch_description_sources import AnyLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
-
+import numpy as np
 def generate_launch_description():
     declare_map_lanelet_path = DeclareLaunchArgument(
         'map_lanelet_path',
@@ -36,12 +36,12 @@ def generate_launch_description():
     )
     declare_pose_segment_size = DeclareLaunchArgument(
         'pose_segment_size',
-        default_value='20',
+        default_value='100',
         description='Pose segment size'
     )
     declare_knn_neighbors = DeclareLaunchArgument(
         'knn_neighbors',
-        default_value='10',
+        default_value='5',
         description='KNN neighbors'
     )
     declare_valid_correspondence_threshold = DeclareLaunchArgument(
@@ -51,7 +51,7 @@ def generate_launch_description():
     )
     declare_icp_error_threshold = DeclareLaunchArgument(
         'icp_error_threshold',
-        default_value='1.0',
+        default_value='1.5',
         description='ICP error threshold'
     )
     declare_trimming_ratio = DeclareLaunchArgument(
@@ -76,7 +76,7 @@ def generate_launch_description():
     )
     declare_estimate_enu_yaw_offset = DeclareLaunchArgument(
         'estimate_enu_yaw_offset',
-        default_value='false',
+        default_value='true',
         description='Estimate ENU yaw offset'
     )
     ins_conversion_node = Node(
@@ -142,7 +142,7 @@ def generate_launch_description():
     
 
     play_ros_bag = ExecuteProcess(
-        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_file'), '--delay', '2', '--rate', '1.0','--start-offset', '0'],
+        cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag_file'), '--delay', '1', '--rate', '1.0','--start-offset', '0'],
         # output='screen',
          condition=IfCondition(LaunchConfiguration('viz'))
 
@@ -160,10 +160,11 @@ def generate_launch_description():
             package='tf2_ros',
             executable='static_transform_publisher',
             name='base_link_to_lidar',
-            arguments=['0', '0', '0', '1.5708', '0', '0', 'os_sensor', 'os_lidar'],
+            arguments=['0', '0', '0', f"{-np.pi}", '0', '0', 'os_lidar', 'base_link'],
             parameters=[{'use_sim_time': True}], 
             output='screen'
     )
+
     tf_map_to_odom =Node(
             package='tf2_ros',
             executable='static_transform_publisher',
@@ -192,7 +193,7 @@ def generate_launch_description():
         tf_base_link_to_lidar,
         tf_map_to_odom,
         #Viz
-        # bridge_socket,
+        bridge_socket,
         rviz2 ,
         play_ros_bag,
        #Nodes
