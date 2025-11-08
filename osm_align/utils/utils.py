@@ -1,10 +1,52 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
-from typing import List, Tuple, Union, Optional
-# from geometry_msgs.msg import Pose
+from typing import List, Tuple, Union
 import numpy as np
 import lanelet2
 import math
+from scipy.spatial.transform import Rotation as R
+a=np.arr
+def tf_matrix_from(buffer, target: str, source: str, timeout_sec: float = 1.0):
+    """
+    Look up TF from source → target and return 4x4 homogeneous transform matrix.
+    Equivalent to buffer.lookup_transform(target, source, ...).
+    """
+    import rclpy
+    from geometry_msgs.msg import TransformStamped
+    from rclpy.duration import Duration
+    try:
+        tf: TransformStamped = buffer.lookup_transform(
+            target, source, 
+            rclpy.time.Time(seconds=0),  # latest available
+            timeout=rclpy.duration.Duration(seconds=timeout_sec)
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to get transform {source}->{target}: {e}")
+
+    # translation
+    t = np.array([
+        tf.transform.translation.x,
+        tf.transform.translation.y,
+        tf.transform.translation.z
+    ])
+
+    # rotation
+    q = np.array([
+        tf.transform.rotation.x,
+        tf.transform.rotation.y,
+        tf.transform.rotation.z,
+        tf.transform.rotation.w
+    ])
+
+    # use scipy Rotation to get rotation matrix
+    R_mat = R.from_quat(q).as_matrix()
+
+    # build homogeneous transform
+    T = np.eye(4)
+    T[:3, :3] = R_mat
+    T[:3, 3] = t
+    return T
+
 def pose_to_4x4(pose) -> np.ndarray:
     """
     Convert geometry_msgs/Pose to a 4x4 homogeneous transformation matrix.

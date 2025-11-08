@@ -12,7 +12,7 @@ from launch.actions import IncludeLaunchDescription
 from launch.substitutions import PythonExpression, TextSubstitution
 from launch.launch_description_sources import AnyLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
-
+import numpy as np  
 def generate_launch_description():
     declare_map_lanelet_path = DeclareLaunchArgument(
         'map_lanelet_path',
@@ -21,7 +21,7 @@ def generate_launch_description():
     )
     declare_gps_topic = DeclareLaunchArgument(
         'gps_topic',
-        default_value='/Inertial_Labs/gps_data_std',
+        default_value='/kitti/oxts/gps',
         description='GPS topic'
     )
     declare_bag_file = DeclareLaunchArgument(
@@ -46,7 +46,7 @@ def generate_launch_description():
     )
     declare_valid_correspondence_threshold = DeclareLaunchArgument(
         'valid_correspondence_threshold',
-        default_value='0.4',
+        default_value='0.5',
         description='Valid correspondence threshold'
     )
     declare_icp_error_threshold = DeclareLaunchArgument(
@@ -56,12 +56,12 @@ def generate_launch_description():
     )
     declare_trimming_ratio = DeclareLaunchArgument(
         'trimming_ratio',   
-        default_value='0.2',
+        default_value='0.1',
         description='Trimming ratio'
     )
     declare_min_distance_threshold = DeclareLaunchArgument(
         'min_distance_threshold',
-        default_value='3.0', #5 meters
+        default_value='10.0', #5 meters
         description='Min distance threshold'
     )
     declare_viz_marker_lanelets = DeclareLaunchArgument(
@@ -79,25 +79,20 @@ def generate_launch_description():
         default_value='false',
         description='Estimate ENU yaw offset'
     )
-    ins_conversion_node = Node(
-        package='osm_align',
-        executable='ins_conversion_node',
-        name='ins_conversion_node',
-        output='screen',
-    )
+
 
     liodom_launch = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(
             os.path.join(
                 get_package_share_directory("liodom"),
                 "launch",
-                "liodom_ouster_launch.xml",
+                "liodom_launch.xml",
             )
         ),
         launch_arguments={
             'viz': 'false',
             'mapping': 'false',
-            'use_imu': 'false',
+            'use_imu': 'true',
         }.items(),
     )
     # rviz2 node
@@ -105,7 +100,7 @@ def generate_launch_description():
         package='rviz2',
         executable='rviz2',
         name='rviz2',
-        arguments=['-d', os.path.join(get_package_share_directory("osm_align"), "rviz", "liodom_ins_ouster.rviz")],
+        arguments=['-d', os.path.join(get_package_share_directory("osm_align"), "rviz", "liodom_kitti.rviz")],
         output='screen',
         condition=IfCondition(LaunchConfiguration('viz'))  
     )
@@ -148,30 +143,20 @@ def generate_launch_description():
 
     )
 
-    
 
-    bridge_socket = ExecuteProcess(
-        cmd=['ros2', 'launch', 'rosbridge_server', 'rosbridge_websocket_launch.xml'],
-        output='screen',
-         condition=IfCondition(LaunchConfiguration('viz'))
-    )
-
-    tf_base_link_to_lidar =Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='base_link_to_lidar',
-            arguments=['0', '0', '0', '1.5708', '0', '0', 'os_sensor', 'os_lidar'],
-            parameters=[{'use_sim_time': True}], 
-            output='screen'
-    )
     tf_map_to_odom =Node(
             package='tf2_ros',
             executable='static_transform_publisher',
             name='map_to_odom',
-            arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
+            arguments=[
+                '0', '0', '0',          # x y z
+            '-1.57079632679', '0', '-1.57079632679',  # yaw pitch roll = -π/2, 0, -π/2
+                'odom', 'map'
+            ],
             parameters=[{'use_sim_time': True}], 
             output='screen'
     )
+
     
 
     return LaunchDescription([
@@ -189,14 +174,12 @@ def generate_launch_description():
         declare_viz,
         declare_bag_file,
         #TFs
-        tf_base_link_to_lidar,
         tf_map_to_odom,
         #Viz
         # bridge_socket,
         rviz2 ,
         play_ros_bag,
        #Nodes
-        ins_conversion_node,
         odometry_correction_node,
         liodom_launch,
 

@@ -14,7 +14,7 @@ from sensor_msgs.msg import NavSatFix
 from rclpy.qos import QoSProfile, QoSHistoryPolicy, QoSDurabilityPolicy, ReliabilityPolicy
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
-
+import tf2_ros
 #Lanelet2
 import lanelet2
 from lanelet2.core import GPSPoint, BasicPoint3d
@@ -46,7 +46,7 @@ class LaneCorrectionNode(Node):
         self.declare_parameter('save_resuts_path', '/tmp/osm_align_results/')
         self.declare_parameter('viz_marker_lanelets', True)
         self.declare_parameter('parameters_correction', '{"pose_segment_size": 100, "knn_neighbors": 10, "valid_correspondence_threshold": 0.9, "icp_error_threshold": 2.0, "trimming_ratio": 0.2, "min_distance_threshold": 10.0}')
-        self.declare_parameter('estimate_enu_yaw_offset', True)
+        self.declare_parameter('estimate_enu_yaw_offset', False)
 
 
         self.parameters_correction: dict = json.loads(self.get_parameter('parameters_correction').get_parameter_value().string_value)
@@ -104,10 +104,15 @@ class LaneCorrectionNode(Node):
         self.pub_corrected_odom=self.create_publisher(Odometry, ODOM_ALIGNED_TOPIC, 10) 
         #Publish corrected gps position
         self.pub_corrected_gps = self.create_publisher(NavSatFix, GPS_CORRECTED_TOPIC, 10)
+    
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
+        self.tf_to_map=utils.tf_matrix_from(self.tf_buffer, "odom", "map",timeout_sec=1.0)
+        self.get_logger().info(f"tf_to_map: {self.tf_to_map}")
 
     def odom_callback(self, msg: Odometry) -> None:  
     
-        pose_received=self.tf_to_yaw_enu_correction@utils.pose_to_4x4(msg.pose.pose)
+        pose_received=self.tf_to_yaw_enu_correction@self.tf_to_map@utils.pose_to_4x4(msg.pose.pose)
         if self.trajectory_correction:
             pose_corrected, message=self.trajectory_correction.apply(pose_received)
         else:
@@ -222,7 +227,7 @@ class LaneCorrectionNode(Node):
 
         odom_msg = Odometry()
         odom_msg.header.frame_id = "map" 
-        odom_msg.child_frame_id = child_frame_id
+        odom_msg.child_frame_id = "base_link"
         odom_msg.header.stamp = self.get_clock().now().to_msg()
         odom_msg.pose.pose=pose
         self.pub_corrected_odom.publish(odom_msg)
@@ -249,7 +254,7 @@ class LaneCorrectionNode(Node):
         markers = MarkerArray()
         for idx, line in enumerate(centerlines):
             marker = Marker()
-            marker.header.frame_id = "odom"
+            marker.header.frame_id = "map"
             marker.header.stamp.sec = 0
             marker.header.stamp.nanosec = 0
             marker.ns = 'lanelet_centerlines'
