@@ -60,7 +60,6 @@ def pose_to_4x4(pose) -> np.ndarray:
     numpy.ndarray
         A 4x4 homogeneous matrix in row-major layout.
     """
-    from geometry_msgs.msg import Pose
     quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
     M = np.eye(4)
     M[:3, :3] = Rotation.from_quat(quat).as_matrix()
@@ -802,8 +801,7 @@ def lanelet_points_and_neighbour(lanelet_map: lanelet2.core.LaneletMap , min_dis
         lanelet_direction_points.extend(tangents)
         lane_points_neighbour.extend(neighbours)
 
-    return np.array(lane_points), np.array(lane_points_neighbour), np.array(lanelet_direction_points)
-
+    return np.hstack((lane_points, lane_points_neighbour, lanelet_direction_points))
 def rotation_angle_2d(ref_point, target_point):
     """
     Compute the 2D rotation angle (degrees) between two vectors.

@@ -43,6 +43,7 @@ class LaneCorrectionNode(Node):
         self.declare_parameter('odom_topic', '/liodom/odom')
         self.declare_parameter('gps_topic', '/Inertial_Labs/gps_data_std')
         self.declare_parameter('map_lanelet_path', '')
+        self.declare_parameter('lane_map_points', '')
         self.declare_parameter('save_resuts_path', '/tmp/osm_align_results/')
         self.declare_parameter('viz_marker_lanelets', True)
         self.declare_parameter('parameters_correction', '{"pose_segment_size": 100, "knn_neighbors": 10, "valid_correspondence_threshold": 0.9, "icp_error_threshold": 2.0, "trimming_ratio": 0.2, "min_distance_threshold": 10.0}')
@@ -53,6 +54,7 @@ class LaneCorrectionNode(Node):
         self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.gps_topic: str = self.get_parameter('gps_topic').get_parameter_value().string_value
         self.map_lanelet_path: str = self.get_parameter('map_lanelet_path').get_parameter_value().string_value
+        self.lane_map_points: str = self.get_parameter('lane_map_points').get_parameter_value().string_value
         self.save_resuts_path: str = self.get_parameter('save_resuts_path').get_parameter_value().string_value
         self.viz_marker_lanelets: bool = self.get_parameter('viz_marker_lanelets').get_parameter_value().bool_value
         self.estimate_enu_yaw_offset: bool = self.get_parameter('estimate_enu_yaw_offset').get_parameter_value().bool_value
@@ -60,6 +62,7 @@ class LaneCorrectionNode(Node):
                                 f"  odom_topic: {self.odom_topic}\n"
                                 f"  gps_topic: {self.gps_topic}\n"
                                 f"  map_lanelet_path: {self.map_lanelet_path}\n"
+                                f"  lane_map_points: {self.lane_map_points}\n"
                                 f"  save_resuts_path: {self.save_resuts_path}\n"
                                 f"  viz_marker_lanelets: {self.viz_marker_lanelets}\n"
                                 f"  parameters_correction: {self.parameters_correction}\n"
@@ -113,7 +116,7 @@ class LaneCorrectionNode(Node):
     def odom_callback(self, msg: Odometry) -> None:  
     
         pose_received=self.tf_to_yaw_enu_correction@self.tf_to_map@utils.pose_to_4x4(msg.pose.pose)
-        if self.trajectory_correction:
+        if self.trajectory_correction: 
             pose_corrected, message=self.trajectory_correction.apply(pose_received)
         else:
             pose_corrected=pose_received
@@ -136,19 +139,20 @@ class LaneCorrectionNode(Node):
         self.frame_count += 1
 
         # Record pose to history before publishing
-        pose_recived=msg.pose.pose
-        pose_recived.position.x=pose_corrected[0, -1]
-        pose_recived.position.y=pose_corrected[1, -1]
+        pose_received=msg.pose.pose
+        pose_received.position.x=pose_corrected[0, -1]
+        pose_received.position.y=pose_corrected[1, -1]
         quat_xyzw=Rotation.from_matrix(pose_corrected[:3,:3]).as_quat()
 
-        pose_recived.orientation.x=quat_xyzw[0]
-        pose_recived.orientation.y=quat_xyzw[1]
-        pose_recived.orientation.z=quat_xyzw[2]
-        pose_recived.orientation.w=quat_xyzw[3]
-        self.publish_odom(pose_recived, msg.child_frame_id)
+        pose_received.orientation.x=quat_xyzw[0]
+        pose_received.orientation.y=quat_xyzw[1]
+        pose_received.orientation.z=quat_xyzw[2]
+        pose_received.orientation.w=quat_xyzw[3]
+        self.publish_odom(pose_received, msg.child_frame_id)
+
         if self._utm_projector:
-            self.publish_corrected_gps(pose_recived)
-            self.poses_history.append(utils.pose_to_4x4(pose_recived))
+            self.publish_corrected_gps(pose_received)
+            self.poses_history.append(utils.pose_to_4x4(pose_received))
 
    
     def gps_callback(self, msg: NavSatFix) -> None:
@@ -156,44 +160,59 @@ class LaneCorrectionNode(Node):
         lat0 = float(msg.latitude)
         lon0 = float(msg.longitude)
         alt0 = float(msg.altitude)
-
-        self.gps_frame_id = msg.header.frame_id
-        #Initialize UTM
-        if self._utm_projector is None:
+        
+        if not self._utm_projector:
+            self.gps_frame_id = msg.header.frame_id
+            #Initialize UTM
+            # if self._utm_projector is None:
 
             self._utm_origin = (lat0, lon0)
             self._utm_projector = lanelet2.projection.UtmProjector(
                 lanelet2.io.Origin(lat0, lon0)
             )
-            
             self.get_logger().info(
                 f"Initialized UTM projector with origin lat={lat0:.8f}, lon={lon0:.8f}, alt={alt0:.2f}"
             )
-            self.lanelet_map = lanelet2.io.load(self.map_lanelet_path, self._utm_projector)
-            self.get_logger().info(f"Lanelet map loaded from: {self.map_lanelet_path}")
-            # Initialize the OdomCorrector object.
+
+            if self.map_lanelet_path:
+                self.lanelet_map = lanelet2.io.load(self.map_lanelet_path, self._utm_projector)
+                self.points_lane_map= utils.lanelet_points_and_neighbour(self.lanelet_map)
+                if self.viz_marker_lanelets:
+                    self.publish_lanelet_markers()
+                self.get_logger().info(f"Lanelet map loaded from: {self.map_lanelet_path}")
+            elif self.lane_map_points:
+                loaded= np.load(self.lane_map_points)
+                self.points_lane_map = loaded['points_lane_map']
+                gps_origin_map = loaded['origin_gps']
+                self.get_logger().info(f"gps_origin_map: {gps_origin_map}")
+                map_projector = lanelet2.projection.UtmProjector(
+                        lanelet2.io.Origin(gps_origin_map[0], gps_origin_map[1])
+                    )
+                offset_xy=map_projector.forward(GPSPoint(lat0, lon0))
+                offset_xy=np.array([offset_xy.x, offset_xy.y])
+                self.get_logger().info(f"offset_xy: {offset_xy}")
+                #Update lane points, to new origin.
+                self.points_lane_map[:,:2]=self.points_lane_map[:,:2]-offset_xy
+                self.points_lane_map[:,2:4]=self.points_lane_map[:,2:4]-offset_xy
+                
             self._initialize_odom_correction()
-            # Publish the lanelet markers for RVIZ visualization
-            if self.viz_marker_lanelets:
-                self.publish_lanelet_markers()
-            else:
-                self.get_logger().info("Viz marker lanelets is disabled")
 
 
 
-        if self.estimate_enu_yaw_offset: 
-            if len(self.poses_history) > 1:# To estimate the ENU yaw wee need two poses, estimation including the first pose
+        if self.estimate_enu_yaw_offset :
+            if len(self.poses_history) > 1 :
                 ref_point= self._utm_projector.forward(GPSPoint(lat0, lon0, alt0))
                 ref_point = [ref_point.x, ref_point.y]
                 target_point= self.poses_history[-1][:2,-1]
                 yaw_offset= utils.rotation_angle_2d(ref_point, target_point)
                 self.enu_yaw_offset= yaw_offset
                 self.tf_to_yaw_enu_correction[:3,:3] = Rotation.from_euler('z', [-self.enu_yaw_offset], degrees=True).as_matrix()
-                self.get_logger().info(f"tf_to_yaw_enu_correction: {self.tf_to_yaw_enu_correction}")
-                self.get_logger().info(f"enu_yaw_offset: {self.enu_yaw_offset} degrees")
-                self.estimate_enu_yaw_offset = False #Set to False to avoid recalculating the yaw offset
-        
 
+                self.get_logger().info(f"enu_yaw_offset: {self.enu_yaw_offset} degrees")
+    
+                self.destroy_subscription(self.sub_gps) #Destroy the subscription to the gps topic, only neede for initialization
+        else:
+            self.destroy_subscription(self.sub_gps) #Destroy the subscription to the odom topic, only neede for initialization
 
 
     def publish_corrected_gps(self, pose) -> None:
@@ -223,11 +242,11 @@ class LaneCorrectionNode(Node):
         msg.altitude = gp.alt
         self.pub_corrected_gps.publish(msg)
 
-    def publish_odom(self, pose, child_frame_id: str) -> None:
+    def publish_odom(self, pose, base_frame_id: str) -> None:
 
         odom_msg = Odometry()
         odom_msg.header.frame_id = "map" 
-        odom_msg.child_frame_id = "base_link"
+        odom_msg.child_frame_id = base_frame_id
         odom_msg.header.stamp = self.get_clock().now().to_msg()
         odom_msg.pose.pose=pose
         self.pub_corrected_odom.publish(odom_msg)
@@ -287,8 +306,7 @@ class LaneCorrectionNode(Node):
             'trimming_ratio': self.parameters_correction['trimming_ratio'],
             'min_distance_threshold': self.parameters_correction['min_distance_threshold'],
         }
-        
-        self.trajectory_correction=OdomCorrector(self.lanelet_map, args)
+        self.trajectory_correction=OdomCorrector(self.points_lane_map, args)
         self.get_logger().info(f"OdomCorrector initialized")
 
     def save_results(self) -> None:

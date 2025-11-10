@@ -19,6 +19,11 @@ def generate_launch_description():
         default_value='',
         description='Path to OSM lanelet file (empty = auto-construct from frame_id)'
     )
+    declare_lane_map_points = DeclareLaunchArgument(
+        'lane_map_points',
+        default_value='',
+        description='Path to OSM points file (empty = auto-construct from frame_id)'
+    )
     declare_gps_topic = DeclareLaunchArgument(
         'gps_topic',
         default_value='/Inertial_Labs/gps_data_std',
@@ -116,6 +121,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'map_lanelet_path': LaunchConfiguration('map_lanelet_path'),
+            'lane_map_points': LaunchConfiguration('lane_map_points'),
             'odom_topic': '/liodom/odom',
             'gps_topic': LaunchConfiguration('gps_topic'),
             'parameters_correction': ParameterValue([
@@ -177,6 +183,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         declare_map_lanelet_path,
+        declare_lane_map_points,
         declare_gps_topic,
         declare_save_resuts_path,
         declare_estimate_enu_yaw_offset,

@@ -46,18 +46,15 @@ class OdomCorrector():
 
     def __init__(
         self,
-        lanelet_map: lanelet2.core.LaneletMap,
-        args: Dict[str, Any]
+        points_lane_map, #is a 6xN array of points
+        args: Dict[str, Any],
     ) -> None:
-        # super().__init__('odometry_corrector')
 
-        self.lanelet_map = lanelet_map
+        self.lane_points=points_lane_map[:,0:2]
+        self.lane_points_neighbour=points_lane_map[:,2:4] #To get intersections
+        self.lane_direction_tan =points_lane_map[:,4:6] #Car direction
 
-        timer_cost = time.time()
-        self.lane_points, self.lane_points_neighbour,self.lanelet_direction_points = utils.lanelet_points_and_neighbour(self.lanelet_map)
-        timer_cost = time.time()-timer_cost
-        print(f"Time taken to compute lanelet points and neighbours: {timer_cost} seconds")
-        
+
         self.lane_kdtree: Optional[cKDTree] = cKDTree(self.lane_points)
 
         self.pose_segment_size: int = args['pose_segment_size']
@@ -102,7 +99,7 @@ class OdomCorrector():
             
         _,knn_index = self.lane_kdtree.query(trajectory_points_xy, k=self.knn_neighbors)
         best_lane_points = utils.find_interception_normal_shooting_nextpoint_tangent(
-            trajectory_points_xy, knn_index, self.lane_points, self.lane_points_neighbour, self.lanelet_direction_points
+            trajectory_points_xy, knn_index, self.lane_points, self.lane_points_neighbour, self.lane_direction_tan
         )
 
         valid_mask = ~np.isnan(best_lane_points).any(axis=1)
