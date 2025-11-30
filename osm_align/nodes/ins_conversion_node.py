@@ -7,7 +7,8 @@ from sensor_msgs.msg import NavSatFix
 from sensor_msgs.msg import NavSatStatus
 from inertiallabs_msgs.msg import SensorData
 from sensor_msgs.msg import Imu
-from tf2_ros import StaticTransformBroadcaster
+from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
+from geometry_msgs.msg import TransformStamped
 import math
 from nav_msgs.msg import Odometry
 from lanelet2.projection import UtmProjector
@@ -40,8 +41,12 @@ class INSConversionNode(Node):
         # 8g → KA=4000, 15g → KA=2000, 40g → KA=500
         self.declare_parameter('accel_scale_factor', 1.0)  # Default for 15g range
         
+        # Base frame id parameter
+        self.declare_parameter('base_frame_id', 'base_link')
+        
         self.KG = self.get_parameter('gyro_scale_factor').value
         self.KA = self.get_parameter('accel_scale_factor').value
+        self.base_frame_id = self.get_parameter('base_frame_id').value
         
         # Conversion constants
         self.DEG_TO_RAD = math.pi / 180.0
@@ -64,6 +69,8 @@ class INSConversionNode(Node):
         self.gps_raw_pub = self.create_publisher(NavSatFix, RENAMED_GPS_TOPIC, 10)
         # Static TF broadcaster for odom to odom_enu transform
         self.tf_static_broadcaster = StaticTransformBroadcaster(self)
+        # Dynamic TF broadcaster for odom to base_link transform
+        self.tf_broadcaster = TransformBroadcaster(self)
         
         self.get_logger().info(f"Gyro scale factor (KG): {self.KG}, Accel scale factor (KA): {self.KA}")
         self.latest_coords = None
@@ -96,13 +103,13 @@ class INSConversionNode(Node):
         # Create rotation quaternion from yaw only (rotation around Z-axis)
         
      
-
+        now = self.get_clock().now().to_msg()
         linear_vel_enu=[msg.vel_enu.x, msg.vel_enu.y, msg.vel_enu.z]
         # ODOM data
         odom_msg = Odometry()
-        odom_msg.header.stamp = msg.header.stamp
+        odom_msg.header.stamp = now
         odom_msg.header.frame_id = 'odom'
-        odom_msg.child_frame_id = msg.header.frame_id
+        odom_msg.child_frame_id = self.base_frame_id
         odom_msg.pose.pose.position.x = float(xyz_p.x)
         odom_msg.pose.pose.position.y = float(xyz_p.y)
         odom_msg.pose.pose.position.z = float(xyz_p.z)
@@ -114,14 +121,28 @@ class INSConversionNode(Node):
         odom_msg.twist.twist.linear.y = linear_vel_enu[1]
         odom_msg.twist.twist.linear.z = linear_vel_enu[2]
         self.odom_pub.publish(odom_msg)
+        
+        # Publish dynamic TF from odom to base_link
+        t = TransformStamped()
+        t.header.stamp = now
+        t.header.frame_id = 'odom'
+        t.child_frame_id = self.base_frame_id
+        t.transform.translation.x = float(xyz_p.x)
+        t.transform.translation.y = float(xyz_p.y)
+        t.transform.translation.z = float(xyz_p.z)
+        t.transform.rotation.x = quats[0]
+        t.transform.rotation.y = quats[1]
+        t.transform.rotation.z = quats[2]
+        t.transform.rotation.w = quats[3]
+        self.tf_broadcaster.sendTransform(t)
         # GPS data
         lat = float(msg.llh.x)
         lon = float(msg.llh.y)
         alt = float(msg.llh.z)
       
-        navsat_fix = NavSatFix()
-        navsat_fix.header.stamp = msg.header.stamp
-        navsat_fix.header.frame_id =  msg.header.frame_id
+        navsat_fix = NavSatFix()    
+        navsat_fix.header.stamp = now
+        navsat_fix.header.frame_id =  self.base_frame_id
         navsat_fix.latitude = lat
         navsat_fix.longitude = lon
         navsat_fix.altitude = alt
