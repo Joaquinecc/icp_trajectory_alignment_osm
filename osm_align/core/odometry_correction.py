@@ -68,7 +68,7 @@ class OdomCorrector():
         self.delta_t_acc = np.eye(4)
         self.error_consecutive=0
 
-    def align_pose(self) -> None:
+    def align_trajectory_pose(self) -> None:
         """
         Align the current sliding-window trajectory to lane centerlines.
 
@@ -98,7 +98,7 @@ class OdomCorrector():
             return 0
             
         _,knn_index = self.lane_kdtree.query(trajectory_points_xy, k=self.knn_neighbors)
-        best_lane_points = utils.find_interception_normal_shooting_nextpoint_tangent(
+        best_lane_points = utils.find_best_match_lane_point(
             trajectory_points_xy, knn_index, self.lane_points, self.lane_points_neighbour, self.lane_direction_tan
         )
 
@@ -155,7 +155,7 @@ class OdomCorrector():
         self.pose_segment.append(pose)
         message=5
         if len(self.pose_segment) == self.pose_segment_size:
-            message=self.align_pose()
+            message=self.align_trajectory_pose()
             self.pose_segment.pop(0)
             if message in  [1, 3, 4, 5]:
                 self.error_consecutive+=1

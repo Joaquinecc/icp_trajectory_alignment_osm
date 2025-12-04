@@ -19,8 +19,8 @@ def generate_launch_description():
         default_value='',
         description='Path to OSM lanelet file (empty = auto-construct from frame_id)'
     )
-    declare_lane_map_points = DeclareLaunchArgument(
-        'lane_map_points',
+    declare_matrix_lane_points = DeclareLaunchArgument(
+        'matrix_lane_points',
         default_value='',
         description='Path to OSM points file (empty = auto-construct from frame_id)'
     )

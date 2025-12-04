@@ -42,8 +42,8 @@ class LaneCorrectionNode(Node):
         self.get_logger().info("Lane correction node initialized")
         self.declare_parameter('odom_topic', '/liodom/odom')
         self.declare_parameter('gps_topic', '/Inertial_Labs/gps_data_std')
-        self.declare_parameter('map_lanelet_path', '')
-        self.declare_parameter('lane_map_points', '')
+        self.declare_parameter('map_lanelet_path', '') #To visualize lanelets
+        self.declare_parameter('matrix_lane_points', '')
         self.declare_parameter('save_resuts_path', '/tmp/osm_align_results/')
         self.declare_parameter('viz_marker_lanelets', True)
         self.declare_parameter('parameters_correction', '{"pose_segment_size": 100, "knn_neighbors": 10, "valid_correspondence_threshold": 0.9, "icp_error_threshold": 2.0, "trimming_ratio": 0.2, "min_distance_threshold": 10.0}')
@@ -54,7 +54,7 @@ class LaneCorrectionNode(Node):
         self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.gps_topic: str = self.get_parameter('gps_topic').get_parameter_value().string_value
         self.map_lanelet_path: str = self.get_parameter('map_lanelet_path').get_parameter_value().string_value
-        self.lane_map_points: str = self.get_parameter('lane_map_points').get_parameter_value().string_value
+        self.matrix_lane_points: str = self.get_parameter('matrix_lane_points').get_parameter_value().string_value
         self.save_resuts_path: str = self.get_parameter('save_resuts_path').get_parameter_value().string_value
         self.viz_marker_lanelets: bool = self.get_parameter('viz_marker_lanelets').get_parameter_value().bool_value
         self.estimate_enu_yaw_offset: bool = self.get_parameter('estimate_enu_yaw_offset').get_parameter_value().bool_value
@@ -62,7 +62,7 @@ class LaneCorrectionNode(Node):
                                 f"  odom_topic: {self.odom_topic}\n"
                                 f"  gps_topic: {self.gps_topic}\n"
                                 f"  map_lanelet_path: {self.map_lanelet_path}\n"
-                                f"  lane_map_points: {self.lane_map_points}\n"
+                                f"  matrix_lane_points: {self.matrix_lane_points}\n"
                                 f"  save_resuts_path: {self.save_resuts_path}\n"
                                 f"  viz_marker_lanelets: {self.viz_marker_lanelets}\n"
                                 f"  parameters_correction: {self.parameters_correction}\n"
@@ -164,8 +164,6 @@ class LaneCorrectionNode(Node):
         if not self._utm_projector:
             self.gps_frame_id = msg.header.frame_id
             #Initialize UTM
-            # if self._utm_projector is None:
-
             self._utm_origin = (lat0, lon0)
             self._utm_projector = lanelet2.projection.UtmProjector(
                 lanelet2.io.Origin(lat0, lon0)
@@ -174,14 +172,9 @@ class LaneCorrectionNode(Node):
                 f"Initialized UTM projector with origin lat={lat0:.8f}, lon={lon0:.8f}, alt={alt0:.2f}"
             )
 
-            if self.map_lanelet_path:
-                self.lanelet_map = lanelet2.io.load(self.map_lanelet_path, self._utm_projector)
-                self.points_lane_map= utils.lanelet_points_and_neighbour(self.lanelet_map)
-                if self.viz_marker_lanelets:
-                    self.publish_lanelet_markers()
-                self.get_logger().info(f"Lanelet map loaded from: {self.map_lanelet_path}")
-            elif self.lane_map_points:
-                loaded= np.load(self.lane_map_points)
+
+            if self.matrix_lane_points:
+                loaded= np.load(self.matrix_lane_points)
                 self.points_lane_map = loaded['points_lane_map']
                 gps_origin_map = loaded['origin_gps']
                 self.get_logger().info(f"gps_origin_map: {gps_origin_map}")
@@ -194,7 +187,12 @@ class LaneCorrectionNode(Node):
                 #Update lane points, to new origin.
                 self.points_lane_map[:,:2]=self.points_lane_map[:,:2]-offset_xy
                 self.points_lane_map[:,2:4]=self.points_lane_map[:,2:4]-offset_xy
-                
+            elif self.map_lanelet_path:  #If lanelet2 osm data provided, load it and get the lane points
+                self.lanelet_map = lanelet2.io.load(self.map_lanelet_path, self._utm_projector)
+                self.points_lane_map= utils.lanelet_points_and_neighbour(self.lanelet_map)
+                if self.viz_marker_lanelets:
+                    self.publish_lanelet_markers()
+                self.get_logger().info(f"Lanelet map loaded from: {self.map_lanelet_path}")
             self._initialize_odom_correction()
 
 
