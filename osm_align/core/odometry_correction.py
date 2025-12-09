@@ -7,11 +7,9 @@ try:
     import osm_align.utils.utils as utils
 except:
     import utils.utils as utils
-import lanelet2
-import time
 # Configuration parameters are now declared as ROS parameters in the node
 
-MAX_ERROR_CONSECUTIVE=30      
+MAX_ERROR_CONSECUTIVE=50      
 
 class OdomCorrector():
     """
@@ -67,7 +65,7 @@ class OdomCorrector():
         self.pose_segment: List[np.ndarray] = []
         self.delta_t_acc = np.eye(4)
         self.error_consecutive=0
-
+        self._set_messages_info()
     def align_trajectory_pose(self) -> None:
         """
         Align the current sliding-window trajectory to lane centerlines.
@@ -171,3 +169,19 @@ class OdomCorrector():
 
 
 
+    def _set_messages_info(self) -> None:
+        """
+        Set the messages information for the trajectory correction.
+        The messages are used to print the information of the trajectory correction.
+        """
+        self.messages_info = {
+            0: f"trajectory length < {self.min_distance_threshold}, skip ICP",
+            1: f"valid correspondences < {self.valid_correspondence_threshold}, skip ICP",
+            2: f"ICP error < {self.icp_error_threshold}, ICP success",
+            3: f"ICP error > {self.icp_error_threshold}, ICP failed",
+            4: f"RESET",
+            5: f"Not enought points to align",
+            6: f"Not initialized"
+        }
+    def get_message_str(self, message_code: int) -> str:
+        return self.messages_info[message_code]

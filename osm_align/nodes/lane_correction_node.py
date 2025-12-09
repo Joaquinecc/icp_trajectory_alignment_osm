@@ -117,25 +117,13 @@ class LaneCorrectionNode(Node):
     
         pose_received=self.tf_to_yaw_enu_correction@self.tf_to_map@utils.pose_to_4x4(msg.pose.pose)
         if self.trajectory_correction: 
-            pose_corrected, message=self.trajectory_correction.apply(pose_received)
+            pose_corrected, message_code=self.trajectory_correction.apply(pose_received)
+
+            message_str=self.trajectory_correction.get_message_str(message_code)
         else:
             pose_corrected=pose_received
-            message=6 #Not initialized
-
-        if message==0:
-            self.get_logger().info(f"frame {self.frame_count} trajectory length < {self.parameters_correction['min_distance_threshold']}, skip ICP")
-        elif message==1:
-            self.get_logger().info(f"frame {self.frame_count} valid correspondences < {self.parameters_correction['valid_correspondence_threshold']}, skip ICP")
-        elif message==2:
-            self.get_logger().info(f"frame {self.frame_count} ICP error < {self.parameters_correction['icp_error_threshold']}, ICP success")
-        elif message==3 :
-            self.get_logger().info(f"frame {self.frame_count} ICP error > {self.parameters_correction['icp_error_threshold']}, ICP success")
-        elif message==4 :
-            self.get_logger().info(f"frame {self.frame_count} RESET")
-        elif message==5 :
-            self.get_logger().info(f"frame {self.frame_count} Not enought points to align")
-        elif message==6 :
-            self.get_logger().info(f"frame {self.frame_count} Not initialized")
+            message_str="Not initialized"
+        self.get_logger().info(f"frame {self.frame_count} {message_str}")
         self.frame_count += 1
 
         # Record pose to history before publishing
@@ -327,9 +315,6 @@ class LaneCorrectionNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = LaneCorrectionNode()
-    # rclpy.spin(node)
-    # node.destroy_node()
-    # rclpy.shutdown()
 
     try:
         rclpy.spin(node)
