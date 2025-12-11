@@ -16,6 +16,8 @@ from lanelet2.core import GPSPoint
 import lanelet2
 from scipy.spatial.transform import Rotation
 import math
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+
 # INS_TOPIC = "/gps"
 GPS_TOPIC_RAW = "/Inertial_Labs/gps_data"
 RENAMED_GPS_TOPIC = "/Inertial_Labs/gps_data_raw_std"
@@ -24,6 +26,13 @@ IMU_TOPIC = "/Inertial_Labs/sensor_data"
 RENAME_TOPIC = "/Inertial_Labs/gps_data_std"
 RENAME_TOPIC_IMU = "/Inertial_Labs/imu_data_std"
 ODOM_INS_TOPIC = "/Inertial_Labs/odom"
+INITIAL_GPS_TOPIC="/Inertial_Labs/initial_gps"
+        # --- Initial GPS publisher (latched-like) ---
+INITIAL_GPS_QOS = QoSProfile(
+    depth=1,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL  # keep last msg for late subscribers
+)
 class INSConversionNode(Node):
     """
     Node to convert GPS data to NavSatFix format.
@@ -67,6 +76,13 @@ class INSConversionNode(Node):
         self.odom_pub = self.create_publisher(Odometry, ODOM_INS_TOPIC, 10)
         self.gps_pub = self.create_publisher(NavSatFix, RENAME_TOPIC, 10)
         self.gps_raw_pub = self.create_publisher(NavSatFix, RENAMED_GPS_TOPIC, 10)
+        self.initial_gps_pub = self.create_publisher(
+            NavSatFix,
+            INITIAL_GPS_TOPIC, 
+            INITIAL_GPS_QOS
+        )
+        self.initial_gps_sent = False
+
         # Static TF broadcaster for odom to odom_enu transform
         self.tf_static_broadcaster = StaticTransformBroadcaster(self)
         # Dynamic TF broadcaster for odom to base_link transform
@@ -150,6 +166,14 @@ class INSConversionNode(Node):
         navsat_fix.status.service = NavSatStatus.SERVICE_GPS
         self.get_logger().debug(f"Publishing GPS data: {lat}, {lon}, {alt}")
         self.gps_pub.publish(navsat_fix)
+
+        if not self.initial_gps_sent:
+            self.initial_gps_sent = True
+            self.initial_gps_pub.publish(navsat_fix)
+            self.get_logger().info(
+                f"Published initial GPS fix to {INITIAL_GPS_TOPIC}: "
+                f"{lat}, {lon}, {alt}"
+            )
 
     def imu_callback(self, msg):
         """

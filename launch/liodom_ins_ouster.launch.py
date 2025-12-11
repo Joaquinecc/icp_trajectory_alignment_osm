@@ -157,7 +157,7 @@ def generate_launch_description():
     
 
     bridge_socket = ExecuteProcess(
-        cmd=['ros2', 'launch', 'rosbridge_server', 'rosbridge_websocket_launch.xml'],
+        cmd=['ros2', 'launch', 'rosbridge_server', 'rosbridge_websocket_launch.xml', "delay_between_messages:=0.0"],
         output='screen',
          condition=IfCondition(LaunchConfiguration('viz'))
     )
@@ -183,7 +183,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         declare_map_lanelet_path,
-        declare_lane_map_points,
+        declare_matrix_lane_points,
         declare_gps_topic,
         declare_save_resuts_path,
         declare_estimate_enu_yaw_offset,
