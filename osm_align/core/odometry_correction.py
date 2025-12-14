@@ -7,9 +7,7 @@ try:
     import osm_align.utils.utils as utils
 except:
     import utils.utils as utils
-# Configuration parameters are now declared as ROS parameters in the node
-
-MAX_ERROR_CONSECUTIVE=50      
+# Configuration parameters are now declared as ROS parameters in the node      
 
 class OdomCorrector():
     """
@@ -40,6 +38,8 @@ class OdomCorrector():
         - 'trimming_ratio' (float): fraction of largest residuals to trim
         - 'min_distance_threshold' (float): minimum path length in the
           current window to trigger alignment
+        - 'max_error_consecutive' (int, optional): maximum consecutive errors
+          before resetting the correction. Defaults to 1000 if not provided.
     """
 
     def __init__(
@@ -61,6 +61,7 @@ class OdomCorrector():
         self.icp_error_threshold: float = args['icp_error_threshold']
         self.trimming_ratio: float = args['trimming_ratio']
         self.min_distance_threshold: float = args['min_distance_threshold']
+        self.max_error_consecutive: int = args.get('max_error_consecutive', 1000)
         #Initialize variables
         self.pose_segment: List[np.ndarray] = []
         self.delta_t_acc = np.eye(4)
@@ -160,7 +161,7 @@ class OdomCorrector():
             else:
                 self.error_consecutive=0
 
-            if self.error_consecutive > MAX_ERROR_CONSECUTIVE: #RESET
+            if self.error_consecutive > self.max_error_consecutive: #RESET
                 self.error_consecutive=0
                 self.pose_segment=[pose]
                 self.delta_t_acc=np.eye(4)
