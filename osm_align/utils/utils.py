@@ -164,7 +164,7 @@ def find_best_match_lane_point(
 
         for laned_idx in nearest_lane_point_idx:
             parallel_score = np.dot(tangent_traj, lanelet_direction_points[laned_idx])
-            if parallel_score <0.9: #Similar road direction to pose yaw
+            if parallel_score <0.95: #Similar road direction to pose yaw
                 continue
             lane_point = map_points[laned_idx]
             neighbour_point = map_neighbour_points[laned_idx]
@@ -182,6 +182,7 @@ def find_best_match_lane_point(
                     proj = lane_point + t * ab
                     # options_nn.append(proj)
                     best_intercept_point = proj
+                    break
                  
         intercept_points[i] = best_intercept_point
 
