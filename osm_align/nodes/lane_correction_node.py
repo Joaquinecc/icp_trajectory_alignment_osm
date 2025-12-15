@@ -40,33 +40,24 @@ class LaneCorrectionNode(Node):
     def __init__(self):
         super().__init__("lane_correction_node")
         self.get_logger().info("Lane correction node initialized")
-        self.declare_parameter('odom_topic', '/liodom/odom')
-        self.declare_parameter('gps_topic', '/Inertial_Labs/gps_data_std')
-        self.declare_parameter('map_lanelet_path', '') #To visualize lanelets
         self.declare_parameter('matrix_lane_points', '')
+        self.declare_parameter('odom_topic', '/liodom/odom')
+        self.declare_parameter('initial_gps_topic', '/Inertial_Labs/initial_gps')
         self.declare_parameter('save_resuts_path', '/tmp/osm_align_results/')
-        self.declare_parameter('viz_marker_lanelets', True)
         self.declare_parameter('parameters_correction', '{"pose_segment_size": 100, "knn_neighbors": 10, "valid_correspondence_threshold": 0.9, "icp_error_threshold": 2.0, "trimming_ratio": 0.2, "min_distance_threshold": 10.0}')
-        self.declare_parameter('estimate_enu_yaw_offset', False)
 
 
         self.parameters_correction: dict = json.loads(self.get_parameter('parameters_correction').get_parameter_value().string_value)
         self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
-        self.gps_topic: str = self.get_parameter('gps_topic').get_parameter_value().string_value
-        self.map_lanelet_path: str = self.get_parameter('map_lanelet_path').get_parameter_value().string_value
         self.matrix_lane_points: str = self.get_parameter('matrix_lane_points').get_parameter_value().string_value
         self.save_resuts_path: str = self.get_parameter('save_resuts_path').get_parameter_value().string_value
-        self.viz_marker_lanelets: bool = self.get_parameter('viz_marker_lanelets').get_parameter_value().bool_value
-        self.estimate_enu_yaw_offset: bool = self.get_parameter('estimate_enu_yaw_offset').get_parameter_value().bool_value
+        self.initial_gps_topic: str = self.get_parameter('initial_gps_topic').get_parameter_value().string_value
         self.get_logger().info(f"Parameters:\n"
                                 f"  odom_topic: {self.odom_topic}\n"
-                                f"  gps_topic: {self.gps_topic}\n"
-                                f"  map_lanelet_path: {self.map_lanelet_path}\n"
                                 f"  matrix_lane_points: {self.matrix_lane_points}\n"
                                 f"  save_resuts_path: {self.save_resuts_path}\n"
-                                f"  viz_marker_lanelets: {self.viz_marker_lanelets}\n"
                                 f"  parameters_correction: {self.parameters_correction}\n"
-                                f"  estimate_enu_yaw_offset: {self.estimate_enu_yaw_offset}")
+                                f"  initial_gps_topic: {self.initial_gps_topic}")
 
 
 
@@ -76,7 +67,6 @@ class LaneCorrectionNode(Node):
         self.frame_count = 0 # Frame count
         self.poses_history = [] # Pose history
         self.trajectory_correction: Optional[OdomCorrector] = None #Trajectory correction
-        self.tf_to_yaw_enu_correction=np.eye(4) #only if estimate_enu_yaw_offset is True,
         #QOS Settings
         qos = QoSProfile(
             depth=1,
@@ -89,8 +79,8 @@ class LaneCorrectionNode(Node):
         #Initialize UTM projector and lanelet map
         self.sub_gps = self.create_subscription(
             NavSatFix,
-            self.gps_topic,
-            self.gps_callback,
+            self.initial_gps_topic,
+            self.initial_gps_callback,
             10
         )
         #Main processing loop
@@ -114,8 +104,10 @@ class LaneCorrectionNode(Node):
         self.get_logger().info(f"tf_to_map: {self.tf_to_map}")
 
     def odom_callback(self, msg: Odometry) -> None:  
-    
-        pose_received=self.tf_to_yaw_enu_correction@self.tf_to_map@utils.pose_to_4x4(msg.pose.pose)
+        if self._utm_projector is None:
+            self.get_logger().warn("UTM projector not initialized yet, waiting for initial GPS...")
+
+        pose_received=self.tf_to_map@utils.pose_to_4x4(msg.pose.pose)
         if self.trajectory_correction: 
             pose_corrected, message_code=self.trajectory_correction.apply(pose_received)
 
@@ -143,62 +135,41 @@ class LaneCorrectionNode(Node):
             self.poses_history.append(utils.pose_to_4x4(pose_received))
 
    
-    def gps_callback(self, msg: NavSatFix) -> None:
+    def initial_gps_callback(self, msg: NavSatFix) -> None:
 
         lat0 = float(msg.latitude)
         lon0 = float(msg.longitude)
         alt0 = float(msg.altitude)
         
-        if not self._utm_projector:
-            self.gps_frame_id = msg.header.frame_id
-            #Initialize UTM
-            self._utm_origin = (lat0, lon0)
-            self._utm_projector = lanelet2.projection.UtmProjector(
-                lanelet2.io.Origin(lat0, lon0)
-            )
-            self.get_logger().info(
-                f"Initialized UTM projector with origin lat={lat0:.8f}, lon={lon0:.8f}, alt={alt0:.2f}"
-            )
+        self.gps_frame_id = msg.header.frame_id
+        #Initialize UTM
+        self._utm_origin = (lat0, lon0)
+        self._utm_projector = lanelet2.projection.UtmProjector(
+            lanelet2.io.Origin(lat0, lon0)
+        )
+        self.get_logger().info(
+            f"Initialized UTM projector with origin lat={lat0:.8f}, lon={lon0:.8f}, alt={alt0:.2f}"
+        )
 
 
-            if self.matrix_lane_points:
-                loaded= np.load(self.matrix_lane_points)
-                self.points_lane_map = loaded['points_lane_map']
-                gps_origin_map = loaded['origin_gps']
-                self.get_logger().info(f"gps_origin_map: {gps_origin_map}")
-                map_projector = lanelet2.projection.UtmProjector(
-                        lanelet2.io.Origin(gps_origin_map[0], gps_origin_map[1])
-                    )
-                offset_xy=map_projector.forward(GPSPoint(lat0, lon0))
-                offset_xy=np.array([offset_xy.x, offset_xy.y])
-                self.get_logger().info(f"offset_xy: {offset_xy}")
-                #Update lane points, to new origin.
-                self.points_lane_map[:,:2]=self.points_lane_map[:,:2]-offset_xy
-                self.points_lane_map[:,2:4]=self.points_lane_map[:,2:4]-offset_xy
-            elif self.map_lanelet_path:  #If lanelet2 osm data provided, load it and get the lane points
-                self.lanelet_map = lanelet2.io.load(self.map_lanelet_path, self._utm_projector)
-                self.points_lane_map= utils.lanelet_points_and_neighbour(self.lanelet_map)
-                if self.viz_marker_lanelets:
-                    self.publish_lanelet_markers()
-                self.get_logger().info(f"Lanelet map loaded from: {self.map_lanelet_path}")
-            self._initialize_odom_correction()
+        if self.matrix_lane_points:
+            loaded= np.load(self.matrix_lane_points)
+            self.points_lane_map = loaded['points_lane_map']
+            gps_origin_map = loaded['origin_gps']
+            self.get_logger().info(f"gps_origin_map: {gps_origin_map}")
+            map_projector = lanelet2.projection.UtmProjector(
+                    lanelet2.io.Origin(gps_origin_map[0], gps_origin_map[1])
+                )
+            offset_xy=map_projector.forward(GPSPoint(lat0, lon0))
+            offset_xy=np.array([offset_xy.x, offset_xy.y])
+            self.get_logger().info(f"offset_xy: {offset_xy}")
+            #Update lane points, to new origin.
+            self.points_lane_map[:,:2]=self.points_lane_map[:,:2]-offset_xy
+            self.points_lane_map[:,2:4]=self.points_lane_map[:,2:4]-offset_xy
 
+        self._initialize_odom_correction()
 
-
-        if self.estimate_enu_yaw_offset :
-            if len(self.poses_history) > 1 :
-                ref_point= self._utm_projector.forward(GPSPoint(lat0, lon0, alt0))
-                ref_point = [ref_point.x, ref_point.y]
-                target_point= self.poses_history[-1][:2,-1]
-                yaw_offset= utils.rotation_angle_2d(ref_point, target_point)
-                self.enu_yaw_offset= yaw_offset
-                self.tf_to_yaw_enu_correction[:3,:3] = Rotation.from_euler('z', [-self.enu_yaw_offset], degrees=True).as_matrix()
-
-                self.get_logger().info(f"enu_yaw_offset: {self.enu_yaw_offset} degrees")
-    
-                self.destroy_subscription(self.sub_gps) #Destroy the subscription to the gps topic, only neede for initialization
-        else:
-            self.destroy_subscription(self.sub_gps) #Destroy the subscription to the odom topic, only neede for initialization
+        self.destroy_subscription(self.sub_gps) #Destroy the subscription to the gps topic, only needed for initialization
 
 
     def publish_corrected_gps(self, pose) -> None:
@@ -238,48 +209,7 @@ class LaneCorrectionNode(Node):
         self.pub_corrected_odom.publish(odom_msg)
         self.get_logger().debug(f"frame {self.frame_count} pose: {pose.position.x}, {pose.position.y}, {pose.position.z}")
         
-    def publish_lanelet_markers(self):
-        """
-        Run only once after the lanelet map is loaded.
-        Publish the lanelet markers for RVIZ visualization.
-        """
-        centerlines: List[np.ndarray] = []  
-        for lanelet in self.lanelet_map.laneletLayer:
-            points_xy: List[np.ndarray] = []
-            for pt in lanelet.centerline:
-                xy = np.array([pt.x, pt.y])
-                points_xy.append(xy)
-            centerlines.append(np.array(points_xy))
-        #Map settings for RVIZ visualization
-        line_width= 0.2
-        color_r = 188.0 / 255.0
-        color_g = 203.0 / 255.0
-        color_b = 169.0 / 255.0
-        color_a = 1.0
-        markers = MarkerArray()
-        for idx, line in enumerate(centerlines):
-            marker = Marker()
-            marker.header.frame_id = "map"
-            marker.header.stamp.sec = 0
-            marker.header.stamp.nanosec = 0
-            marker.ns = 'lanelet_centerlines'
-            marker.id = idx
-            marker.type = Marker.LINE_STRIP
-            marker.action = Marker.ADD
-            marker.pose.orientation.w = 1.0
-            marker.scale.x = float(line_width)
-            marker.color.r = float(color_r)
-            marker.color.g = float(color_g)
-            marker.color.b = float(color_b)
-            marker.color.a = float(color_a)
-            # Convert to geometry_msgs/Point list, z=0
-            marker.points = [Point(x=float(p[0]), y=float(p[1]), z=0.0) for p in line]
-            # Infinite lifetime; with transient local, late subscribers will receive
-            marker.lifetime = Duration(seconds=0).to_msg()
-            markers.markers.append(marker)
-        self.get_logger().info(f"Published {len(markers.markers)} lanelet centerlines")
-        self.pub_lanelet_markers.publish(markers)
-
+  
     def _initialize_odom_correction(self) -> None:
         """
         Initialize the OdomCorrector object.

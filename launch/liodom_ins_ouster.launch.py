@@ -9,25 +9,15 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch.actions import ExecuteProcess
 from launch.actions import IncludeLaunchDescription
-from launch.substitutions import PythonExpression, TextSubstitution
+from launch.substitutions import  TextSubstitution
 from launch.launch_description_sources import AnyLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
 import numpy as np
 def generate_launch_description():
-    declare_map_lanelet_path = DeclareLaunchArgument(
-        'map_lanelet_path',
-        default_value='',
-        description='Path to OSM lanelet file (empty = auto-construct from frame_id)'
-    )
     declare_matrix_lane_points = DeclareLaunchArgument(
         'matrix_lane_points',
         default_value='',
         description='Path to OSM points file (empty = auto-construct from frame_id)'
-    )
-    declare_gps_topic = DeclareLaunchArgument(
-        'gps_topic',
-        default_value='/Inertial_Labs/gps_data_std',
-        description='GPS topic'
     )
     declare_bag_file = DeclareLaunchArgument(
         'bag_file',
@@ -41,12 +31,12 @@ def generate_launch_description():
     )
     declare_pose_segment_size = DeclareLaunchArgument(
         'pose_segment_size',
-        default_value='100',
+        default_value='50',
         description='Pose segment size'
     )
     declare_knn_neighbors = DeclareLaunchArgument(
         'knn_neighbors',
-        default_value='5',
+        default_value='20',
         description='KNN neighbors'
     )
     declare_valid_correspondence_threshold = DeclareLaunchArgument(
@@ -56,12 +46,12 @@ def generate_launch_description():
     )
     declare_icp_error_threshold = DeclareLaunchArgument(
         'icp_error_threshold',
-        default_value='1.5',
+        default_value='1.0',
         description='ICP error threshold'
     )
     declare_trimming_ratio = DeclareLaunchArgument(
         'trimming_ratio',   
-        default_value='0.2',
+        default_value='0.1',
         description='Trimming ratio'
     )
     declare_min_distance_threshold = DeclareLaunchArgument(
@@ -69,21 +59,14 @@ def generate_launch_description():
         default_value='3.0', #5 meters
         description='Min distance threshold'
     )
-    declare_viz_marker_lanelets = DeclareLaunchArgument(
-        'viz_marker_lanelets',
-        default_value='true',
-        description='Viz marker lanelets'
-    )
     declare_viz = DeclareLaunchArgument(
         'viz',
         default_value='true',
         description='Viz'
     )
-    declare_estimate_enu_yaw_offset = DeclareLaunchArgument(
-        'estimate_enu_yaw_offset',
-        default_value='true',
-        description='Estimate ENU yaw offset'
-    )
+
+
+
     ins_conversion_node = Node(
         package='osm_align',
         executable='ins_conversion_node',
@@ -103,9 +86,15 @@ def generate_launch_description():
             'viz': 'false',
             'mapping': 'false',
             'use_imu': 'false',
+            'publish_tf': 'false',
         }.items(),
     )
-    # rviz2 node
+    liodom_ouster_enu_corrector_node = Node(
+        package='osm_align',
+        executable='liodom_ouster_enu_corrector_node',
+        name='liodom_ouster_enu_corrector_node',
+        output='screen',
+    )
     rviz2 = Node(
         package='rviz2',
         executable='rviz2',
@@ -120,10 +109,9 @@ def generate_launch_description():
         name='odometry_correction_node',
         output='screen',
         parameters=[{
-            'map_lanelet_path': LaunchConfiguration('map_lanelet_path'),
-            'lane_map_points': LaunchConfiguration('lane_map_points'),
-            'odom_topic': '/liodom/odom',
-            'gps_topic': LaunchConfiguration('gps_topic'),
+            'matrix_lane_points': LaunchConfiguration('matrix_lane_points'),
+            'odom_topic': '/liodom/odom_enu',
+            'initial_gps_topic': '/Inertial_Labs/initial_gps',
             'parameters_correction': ParameterValue([
                 TextSubstitution(text='{"pose_segment_size": '),
                 LaunchConfiguration('pose_segment_size'),
@@ -140,8 +128,6 @@ def generate_launch_description():
                 TextSubstitution(text='}'),
             ], value_type=str),
             'save_resuts_path': LaunchConfiguration('save_resuts_path'),
-            'viz_marker_lanelets': LaunchConfiguration('viz_marker_lanelets'),
-            'estimate_enu_yaw_offset': LaunchConfiguration('estimate_enu_yaw_offset'),
         }],
     )
     
@@ -166,7 +152,7 @@ def generate_launch_description():
             package='tf2_ros',
             executable='static_transform_publisher',
             name='base_link_to_lidar',
-            arguments=['0', '0', '0', f"{-np.pi}", '0', '0', 'os_lidar', 'base_link'],
+            arguments=['0', '0', '0', "0", '0', '0', 'os_sensor', 'base_link'],
             parameters=[{'use_sim_time': True}], 
             output='screen'
     )
@@ -182,12 +168,8 @@ def generate_launch_description():
     
 
     return LaunchDescription([
-        declare_map_lanelet_path,
         declare_matrix_lane_points,
-        declare_gps_topic,
         declare_save_resuts_path,
-        declare_estimate_enu_yaw_offset,
-        declare_viz_marker_lanelets,
         declare_pose_segment_size,
         declare_knn_neighbors,
         declare_valid_correspondence_threshold,
@@ -205,6 +187,7 @@ def generate_launch_description():
         play_ros_bag,
        #Nodes
         ins_conversion_node,
+        liodom_ouster_enu_corrector_node,
         odometry_correction_node,
         liodom_launch,
 

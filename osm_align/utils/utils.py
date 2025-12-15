@@ -5,6 +5,9 @@ import numpy as np
 import lanelet2
 import math
 from scipy.spatial.transform import Rotation as R
+
+
+
 def tf_matrix_from(buffer, target: str, source: str, timeout_sec: float = 1.0):
     """
     Look up TF from source → target and return 4x4 homogeneous transform matrix.
@@ -60,12 +63,17 @@ def pose_to_4x4(pose) -> np.ndarray:
     numpy.ndarray
         A 4x4 homogeneous matrix in row-major layout.
     """
-    quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
-    M = np.eye(4)
-    M[:3, :3] = Rotation.from_quat(quat).as_matrix()
-    M[:3, 3] =  np.array([pose.position.x, pose.position.y, pose.position.z])
-    return M
+    quat = np.array([
+        pose.orientation.x,
+        pose.orientation.y,
+        pose.orientation.z,
+        pose.orientation.w
+    ], dtype=float)
 
+    M = np.eye(4)
+    M[:3, 3] = [pose.position.x, pose.position.y, pose.position.z]
+    M[:3, :3] = Rotation.from_quat(quat).as_matrix()
+    return M
 def pose_to_homogenous_matrix(R: np.ndarray, T: np.ndarray) -> np.ndarray:
     """
     Convert a 2D rotation matrix and translation vector to a 4x4 homogeneous transformation matrix.
@@ -471,42 +479,146 @@ def lanelet_points_and_neighbour(lanelet_map: lanelet2.core.LaneletMap , min_dis
         lane_points_neighbour.extend(neighbours)
 
     return np.hstack((lane_points, lane_points_neighbour, lanelet_direction_points))
-def rotation_angle_2d(ref_point, target_point):
+def rotation_angle_2d(ref_point: np.ndarray, target_point: np.ndarray) -> np.ndarray:
     """
-    Compute the 2D rotation angle (degrees) between two vectors.
+    Compute the 2D rotation angle (degrees) between two sets of vectors (elementwise).
     
     Parameters
     ----------
-    ref_point : tuple or list (x, y)
-        The reference vector in the first frame.
-    target_point : tuple or list (x, y)
-        The corresponding vector in the rotated frame.
+    ref_point : np.ndarray of shape (N, 2)
+        Array of reference vectors in the first frame.
+    target_point : np.ndarray of shape (N, 2)
+        Array of corresponding vectors in the rotated frame.
     
     Returns
     -------
-    float
-        Rotation angle in degrees (positive = counterclockwise).
+    np.ndarray of shape (N,)
+        Rotation angles in degrees (positive = counterclockwise) for each vector pair.
     """
-    x, y = ref_point
-    xp, yp = target_point
+    # Ensure numpy array and float dtype
+    ref_point = np.asarray(ref_point, dtype=np.float64)
+    target_point = np.asarray(target_point, dtype=np.float64)
+    # Dot product and cross product (per row)
+    dot = np.sum(ref_point * target_point, axis=1)
+    # 2D cross product: x1*y2 - y1*x2
+    cross = ref_point[:, 0] * target_point[:, 1] - ref_point[:, 1] * target_point[:, 0]
 
-    # dot and cross (scalar in 2D)
-    dot = x * xp + y * yp
-    cross = x * yp - y * xp
+    # Norms
+    norm_ref = np.linalg.norm(ref_point, axis=1)
+    norm_target = np.linalg.norm(target_point, axis=1)
 
-    # norms
-    norm_ref = math.hypot(x, y)
-    norm_target = math.hypot(xp, yp)
+    # Cosine and sine of the angles
+    denom = norm_ref * norm_target
+    # Avoid division by zero
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cos_theta = np.divide(dot, denom, where=denom!=0)
+        sin_theta = np.divide(cross, denom, where=denom!=0)
 
-    # cosine and sine of the angle
-    cos_theta = dot / (norm_ref * norm_target)
-    sin_theta = cross / (norm_ref * norm_target)
+    # Clamp cos_theta for numerical stability
+    cos_theta = np.clip(cos_theta, -1.0, 1.0)
 
-    # clamp cos_theta for numerical safety
-    cos_theta = max(min(cos_theta, 1.0), -1.0)
-
-    angle_rad = math.atan2(sin_theta, cos_theta)
-    angle_deg = math.degrees(angle_rad)
+    angle_rad = np.arctan2(sin_theta, cos_theta)
+    angle_deg = np.degrees(angle_rad)
+    # Set deg=0 where denominator is zero
+    angle_deg = np.where(denom != 0, angle_deg, 0.0)
     return angle_deg
 
 
+def read_basalt_pose(file_path: str) -> List[np.ndarray]:
+    """
+    Read poses from a Basalt CSV file and return a list of 4x4 transformation matrices.
+
+    The CSV file format is:
+    #timestamp [ns],p_RS_R_x [m],p_RS_R_y [m],p_RS_R_z [m],q_RS_w [],q_RS_x [],q_RS_y [],q_RS_z []
+    with quaternion in (w, x, y, z) format.
+
+    Parameters
+    ----------
+    file_path : str
+        Path to the CSV file containing pose data.
+
+    Returns
+    -------
+    List[np.ndarray]
+        List of 4x4 homogeneous transformation matrices, one for each pose in the file.
+
+    Examples
+    --------
+    >>> poses = read_basalt_pose("seq00.csv")
+    >>> print(f"Number of poses: {len(poses)}")
+    >>> print(f"First pose shape: {poses[0].shape}")
+    Number of poses: 13
+    First pose shape: (4, 4)
+    """
+    # Read CSV file, skipping header line (starts with #)
+    data = np.genfromtxt(
+        file_path,
+        delimiter=',',
+        skip_header=1,
+        dtype=np.float64
+    )
+
+    poses = []
+    for row in data:
+        # Extract position: p_RS_R_x, p_RS_R_y, p_RS_R_z
+        position = np.array([row[1], row[2], row[3]])
+
+        # Extract quaternion: q_RS_w, q_RS_x, q_RS_y, q_RS_z
+        # scipy expects (x, y, z, w) format
+        quat_wxyz = np.array([row[5], row[6], row[7], row[4]])
+
+        # Convert quaternion to rotation matrix using scipy
+        rotation_matrix = Rotation.from_quat(quat_wxyz).as_matrix()
+
+        # Build 4x4 homogeneous transformation matrix
+        pose_matrix = np.eye(4)
+        pose_matrix[:3, :3] = rotation_matrix
+        pose_matrix[:3, 3] = position
+
+        poses.append(pose_matrix)
+
+    return np.array(poses)
+
+def get_map_points(map_path, new_origin_gps):
+    """
+    It loads the map points and updates them to the new origin.
+    The map data it include the lane points information as the origin GPS coordinates.
+    We update the lane points to the new origin.
+
+    Parameters
+    ----------
+    map_path : str
+        Path to the map file.
+    new_origin_gps : tuple
+        New origin GPS coordinates.
+
+    Returns
+    -------
+    points_lane_map : np.ndarray
+        Array of shape (N, 6) containing the lane points and their next points.
+
+    Examples
+    --------
+    >>> points_lane_map = get_map_points("map.npz", (48.98254523586602, 8.39036610004500))
+    >>> print(points_lane_map.shape)
+    (N, 6)
+    >>> print(points_lane_map[0])
+    [x1, y1, x2, y2, x3, y3]
+    """
+    #Initialize odometry corrector
+    lat0,lon0=new_origin_gps
+    loaded= np.load(map_path)
+    points_lane_map = loaded['points_lane_map']
+    gps_origin_map = loaded['origin_gps']
+    map_projector = lanelet2.projection.UtmProjector(
+            lanelet2.io.Origin(gps_origin_map[0], gps_origin_map[1])
+        )
+
+    #Calculate offset to new origin
+    offset_xy=map_projector.forward(lanelet2.core.GPSPoint(lat0, lon0))
+    offset_xy=np.array([offset_xy.x, offset_xy.y])
+    #Update lane points, to new origin.
+    points_lane_map[:,:2]=points_lane_map[:,:2]-offset_xy
+    points_lane_map[:,2:4]=points_lane_map[:,2:4]-offset_xy
+
+    return points_lane_map

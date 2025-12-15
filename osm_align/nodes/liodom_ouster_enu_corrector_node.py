@@ -109,9 +109,7 @@ class LiodomOusterEnuCorrectorNode(Node):
         Handle initial GPS message to set the origin.
         This should be called once to establish the origin pose.
         """
-        if self.initial_gps_received:
-            return  # Only process once
-        
+  
         lat0 = float(msg.latitude)
         lon0 = float(msg.longitude)
         alt0 = float(msg.altitude)
@@ -130,6 +128,7 @@ class LiodomOusterEnuCorrectorNode(Node):
         # The origin pose will be set when we receive the first odometry message
         # at the same time as the initial GPS
         self.initial_gps_received = True
+        self.destroy_subscription(self.sub_initial_gps)
 
     def odom_callback(self, msg: Odometry) -> None:
         """
@@ -163,25 +162,29 @@ class LiodomOusterEnuCorrectorNode(Node):
         if not self._utm_projector:
             return
         
-        if len(self.poses_history) < 1:
+        if len(self.poses_history) <= 1:
             return  # Need at least 1 pose to calculate yaw offset
         
         lat0 = float(msg.latitude)
         lon0 = float(msg.longitude)
         alt0 = float(msg.altitude)
-        
+
         # Convert GPS to UTM coordinates (relative to UTM origin)
         ref_point = self._utm_projector.forward(GPSPoint(lat0, lon0, alt0))
-        ref_point_xy = [ref_point.x, ref_point.y]
+        ref_point_xy = np.array([
+            [0.0, 0.0],
+            [float(ref_point.x), float(ref_point.y)]
+        ])
         
-        # Get the latest pose position (after 180-degree rotation, in map frame)
-        target_point = self.poses_history[-1][:2, -1]
-        
+        # Build odometry trajectory vector for yaw offset estimation
+        target_point = np.array([
+            [0.0, 0.0],
+            self.poses_history[-1][:2, -1]
+        ])
         # Calculate yaw offset between GPS direction and odometry direction
         yaw_offset = utils.rotation_angle_2d(ref_point_xy, target_point)
-        
         # Update yaw offset and correction transform
-        self.enu_yaw_offset = yaw_offset
+        self.enu_yaw_offset = yaw_offset[-1]
         self.tf_to_yaw_enu_correction[:3, :3] = Rotation.from_euler(
             'z', [-self.enu_yaw_offset], degrees=True
         ).as_matrix()
