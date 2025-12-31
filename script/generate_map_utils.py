@@ -68,8 +68,9 @@ def main():
         {bbox[0]},{bbox[1]},
         {bbox[2]},{bbox[3]}
         ];
-        way
-        [highway~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street)$"];
+        way[
+        highway~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street)(_link)?$"
+        ];
         (._;>;);
         out meta qt;
         """.strip()
