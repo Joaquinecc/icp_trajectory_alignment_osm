@@ -60,6 +60,72 @@ cordinta_dict: Dict[str, Dict[str, float]] = {
     },
 }
 
+
+
+# Dictionary mapping KITTI frame IDs to origin lat/lon (angle_corr omitted)
+cordinta_dict_360: Dict[str, Dict[str, float]] = {
+    "00": {
+        "origin_lat": 49.01779795478, 
+        "origin_lon": 8.4411710247314,
+    },
+    "02": {
+        "origin_lat": 48.999686678156,  
+        "origin_lon": 8.4794003539197,
+    },
+    "03": {
+        "origin_lat": 48.987645787582,
+        "origin_lon": 8.4706970896214,
+    },
+    "04": {
+        "origin_lat": 48.972536553308,
+        "origin_lon": 8.478546105177,
+    },
+    "05": {
+        "origin_lat": 48.957367577783,
+        "origin_lon": 8.4763903267133,
+    },
+    "06": {
+        "origin_lat": 48.957580390277,
+        "origin_lon": 8.4665483442499,
+    },
+    "07": {
+        "origin_lat": 48.969559365587,
+        "origin_lon": 8.4462369848171,
+    },
+    "09": {
+        "origin_lat": 48.979885916628,
+        "origin_lon": 8.3942287993623,
+    },
+    "10": {
+        "origin_lat": 48.990371975089,
+        "origin_lon": 8.3922031685007,
+    },
+}
+kitti_360_frame_range_cam: Dict[str, int] = {
+    "00":[0,11517],
+    "02":[4391,18997],
+    "03":[0,1030],
+    "04":[0,11586],
+    "05":[0,6742],
+    "06":[0,9698],
+    "07":[0,3395],
+    "08":[1482,4633],
+    "09":[0,14055],
+    "10":[0,3835],   
+}
+
+kitti_360_frame_range_lidar: Dict[str, int] = {
+    "00":[0,11517],
+    "02":[4391,19239],
+    "03":[0,1030],
+    "04":[0,11586],
+    "05":[0,6742],
+    "06":[0,9698],
+    "07":[0,3395],
+    "08":[1482,4633],
+    "09":[0,14055],
+    "10":[0,3835],   
+}
 # Table of sequences
 kitti_sequences = {
     "00": ("2011_10_03", "0027", [0, 4540]),
@@ -74,6 +140,21 @@ kitti_sequences = {
     "09": ("2011_09_30", "0033", [0, 1590]),
     "10": ("2011_09_30", "0034", [0, 1200]),
 }
+
+
+def read_kitti_360_poses(file_path):
+    with open(file_path) as f:
+        lines=f.readlines()
+    poses=[]
+    index=[]
+    for line in lines:
+        data=line.split()
+        pose=np.array(data[1:]).astype(float).reshape(4,4)
+        # pose = np.concatenate((pose, np.array([0.,0.,0.,1.]).reshape(1,4)))
+        poses.append(pose)
+        index.append(int(data[0]))
+    return np.array(poses),np.array(index)
+
 def get_kitti_sequence_info(seq_id: Union[int, str]) -> Tuple[str, str, List[int]]:
     """
     Retrieve KITTI sequence metadata including date, drive number, and frame range.
@@ -118,7 +199,7 @@ def get_kitti_sequence_info(seq_id: Union[int, str]) -> Tuple[str, str, List[int
     date, drive, frames = kitti_sequences[seq_id_str]
     return date, drive, frames
 
-def get_pose(path: str) -> np.ndarray:
+def get_kitti_pose(path: str) -> np.ndarray:
     """
     Load pose data from a text file in 3x4 matrix format.
 
@@ -168,3 +249,9 @@ def get_pose(path: str) -> np.ndarray:
         poses.append(aux)
     return np.array(poses)
 
+def read_calib_file_kitti_360(calib_path: str) -> np.ndarray:
+    with open(calib_path) as f:
+        data=f.readlines()
+        data=np.array(data[0].split(),dtype=float).reshape(3,4)
+        tf_cam_to_velo=np.concatenate((data,np.array([0.,0.,0.,1.]).reshape(1,4)),axis=0)
+    return tf_cam_to_velo

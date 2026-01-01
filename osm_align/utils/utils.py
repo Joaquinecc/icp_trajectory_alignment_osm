@@ -421,7 +421,6 @@ def solve_trimmed_icp_2d(
     icp_error = np.mean(np.linalg.norm(correct_source_points[best_indices] - target_points[best_indices], axis=1))
     return R_total, t_total, icp_error
 
-
 def lanelet_points_and_neighbour(lanelet_map: lanelet2.core.LaneletMap , min_dist: float = 3.0) -> Tuple[np.ndarray, np.ndarray]:
     """
     Build the lanelet point list and its next-point associations.
@@ -522,8 +521,6 @@ def rotation_angle_2d(ref_point: np.ndarray, target_point: np.ndarray) -> np.nda
     # Set deg=0 where denominator is zero
     angle_deg = np.where(denom != 0, angle_deg, 0.0)
     return angle_deg
-
-
 def read_basalt_pose(file_path: str) -> List[np.ndarray]:
     """
     Read poses from a Basalt CSV file and return a list of 4x4 transformation matrices.
@@ -578,7 +575,6 @@ def read_basalt_pose(file_path: str) -> List[np.ndarray]:
         poses.append(pose_matrix)
 
     return np.array(poses)
-
 def get_map_points(map_path, new_origin_gps):
     """
     It loads the map points and updates them to the new origin.
@@ -616,6 +612,8 @@ def get_map_points(map_path, new_origin_gps):
 
     #Calculate offset to new origin
     offset_xy=map_projector.forward(lanelet2.core.GPSPoint(lat0, lon0))
+
+    
     offset_xy=np.array([offset_xy.x, offset_xy.y])
     #Update lane points, to new origin.
     points_lane_map[:,:2]=points_lane_map[:,:2]-offset_xy
