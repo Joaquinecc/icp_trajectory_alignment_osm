@@ -19,12 +19,12 @@ if workspace_root not in sys.path:
 
 from osm_align.core.odometry_correction import OdomCorrector
 from osm_align.utils import utils
-from osm_align.utils.kitti_utils import angle_dict, cordinta_dict
+from osm_align.utils.kitti_utils import angle_dict, cordinta_dict, read_kitti_pose
 
 
 def precompute_sequence_data(
     seq: int,
-    basalt_pose_dir: str,
+    liodom_pose_dir: str,
     kitti_base_dir: str,
     map_path: str
 ) -> dict:
@@ -35,20 +35,20 @@ def precompute_sequence_data(
     ----------
     seq : int
         Sequence number
-    basalt_pose_dir : str
-        Directory containing basalt pose CSV files
+    liodom_pose_dir : str
+        Directory containing liodom pose files
     kitti_base_dir : str
         Base directory for KITTI dataset
     map_path : str
-        Path to map points file
+        Base path to map points file (will be joined with sequence-specific path)
         
     Returns
     -------
     dict
         Dictionary containing pre-computed data:
         - gt_poses: Ground truth poses (transformed to velodyne frame)
-        - basalt_poses: Basalt poses (transformed to velodyne frame)
-        - ape_basalt: Pre-computed APE metrics for basalt poses
+        - liodom_poses: Liodom poses (transformed to velodyne frame)
+        - ape_liodom: Pre-computed APE metrics for liodom poses
         - points_lane_map: Map points for this sequence
     """
     seq_str = f"{seq:02d}"
@@ -56,9 +56,9 @@ def precompute_sequence_data(
     # Load KITTI data
     kitti_odom = pykitti.odometry(kitti_base_dir, seq_str)
     
-    # Load basalt poses
-    basalt_pose_file_path = os.path.join(basalt_pose_dir, f"{seq_str}.csv")
-    basalt_poses = utils.read_basalt_pose(basalt_pose_file_path)
+    # Load liodom poses
+    liodom_pose_file_path = os.path.join(liodom_pose_dir, f"{seq_str}.txt")
+    liodom_poses = read_kitti_pose(liodom_pose_file_path)
     
     # Transform poses
     T_cam0_velo = kitti_odom.calib.T_cam0_velo
@@ -69,21 +69,26 @@ def precompute_sequence_data(
     gt_poses = np.array(kitti_odom.poses) @ T_cam0_velo
     gt_poses = tf_yaw_to_enu @ np.linalg.inv(gt_poses[0]) @ gt_poses
     
-    # Transform basalt poses
-    basalt_poses = basalt_poses @ T_cam0_velo
-    basalt_poses = tf_yaw_to_enu @ np.linalg.inv(basalt_poses[0]) @ basalt_poses
+    # Transform liodom poses
+    liodom_poses = liodom_poses @ T_cam0_velo
+    liodom_poses = tf_yaw_to_enu @ np.linalg.inv(liodom_poses[0]) @ liodom_poses
     
-    # Get map points
+    # Get map points (sequence-specific map path)
+    seq_map_path = os.path.join(kitti_base_dir, "map", seq_str, f"{seq_str}_map_points.npz")
     new_origin_gps = [cordinta_dict[seq_str]['origin_lat'], cordinta_dict[seq_str]['origin_lon']]
-    points_lane_map = utils.get_map_points(map_path, new_origin_gps)
+    points_lane_map = utils.get_map_points(seq_map_path, new_origin_gps)
     
-    # Pre-compute APE metrics for basalt poses
-    ape_basalt = compute_ape_metrics(gt_poses, basalt_poses)
+    # Verify poses have same length
+    assert len(liodom_poses) == len(gt_poses), \
+        f"Liodom poses ({len(liodom_poses)}) and GT poses ({len(gt_poses)}) must have same length"
+    
+    # Pre-compute APE metrics for liodom poses
+    ape_liodom = compute_ape_metrics(gt_poses, liodom_poses)
     
     return {
         'gt_poses': gt_poses,
-        'basalt_poses': basalt_poses,
-        'ape_basalt': ape_basalt,
+        'liodom_poses': liodom_poses,
+        'ape_liodom': ape_liodom,
         'points_lane_map': points_lane_map
     }
 
@@ -118,8 +123,8 @@ def run_single_experiment(
     seq_data : dict
         Pre-computed sequence data containing:
         - gt_poses: Ground truth poses
-        - basalt_poses: Basalt poses
-        - ape_basalt: Pre-computed APE metrics for basalt
+        - liodom_poses: Liodom poses
+        - ape_liodom: Pre-computed APE metrics for liodom
         - points_lane_map: Map points
     lock : threading.Lock
         Thread lock for printing
@@ -129,8 +134,8 @@ def run_single_experiment(
     try:
         # Use pre-computed sequence data (passed as copy)
         gt_poses = seq_data['gt_poses']
-        basalt_poses = seq_data['basalt_poses']
-        ape_basalt = seq_data['ape_basalt']  # Already a copy
+        liodom_poses = seq_data['liodom_poses']
+        ape_liodom = seq_data['ape_liodom']  # Already a copy
         points_lane_map = seq_data['points_lane_map']
 
         folder_name = f"r_{seq_str}_{pose_segment_size}_{knn_neighbors}_{max_error_consecutive}_{icp_error_threshold}"
@@ -138,12 +143,12 @@ def run_single_experiment(
         
         # Check if experiment already completed
         poses_path = os.path.join(output_folder, "poses.txt")
-        result_basalt_path = os.path.join(output_folder, "result_basalt.csv")
+        result_liodom_path = os.path.join(output_folder, "result_liodom.csv")
         result_corrected_path = os.path.join(output_folder, "result_corrected.csv")
         
         if os.path.exists(output_folder) and \
            os.path.exists(poses_path) and \
-           os.path.exists(result_basalt_path) and \
+           os.path.exists(result_liodom_path) and \
            os.path.exists(result_corrected_path):
             with lock:
                 print(f"Skipping (already completed): seq={seq_str}, pose_segment_size={pose_segment_size}, "
@@ -169,26 +174,26 @@ def run_single_experiment(
         
         # Apply correction
         poses_corrected = []
-        for i in range(len(basalt_poses)):
-            pose_received = basalt_poses[i]
+        for i in range(len(liodom_poses)):
+            pose_received = liodom_poses[i]
             pose_corrected, message = trajectory_correction.apply(pose_received)
             poses_corrected.append(pose_corrected)
         
         poses_corrected = np.array(poses_corrected)
         
-        # Compute APE metrics (ape_basalt is already pre-computed)
+        # Compute APE metrics (ape_liodom is already pre-computed)
         ape_corrected = compute_ape_metrics(gt_poses, poses_corrected)
         
         # Save poses
         save_poses_to_file(poses_corrected, poses_path)
-        save_ape_to_csv(ape_basalt, result_basalt_path)
+        save_ape_to_csv(ape_liodom, result_liodom_path)
         save_ape_to_csv(ape_corrected, result_corrected_path)
         
         with lock:
             print(f"Completed: seq={seq_str}, pose_segment_size={pose_segment_size}, "
                   f"knn_neighbors={knn_neighbors}, max_error_consecutive={max_error_consecutive}, "
                   f"icp_error_threshold={icp_error_threshold}")
-            print(f"  Basalt APE RMSE: {ape_basalt['rmse']:.4f}")
+            print(f"  Liodom APE RMSE: {ape_liodom['rmse']:.4f}")
             print(f"  Corrected APE RMSE: {ape_corrected['rmse']:.4f}")
     
     except Exception as e:
@@ -199,13 +204,13 @@ def run_single_experiment(
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Run basalt trajectory correction experiments')
-    parser.add_argument('--basalt_pose_dir', type=str, required=True,
-                        help='Directory containing basalt pose CSV files')
+    parser = argparse.ArgumentParser(description='Run liodom trajectory correction experiments')
+    parser.add_argument('--liodom_pose_dir', type=str, required=True,
+                        help='Directory containing liodom pose files')
     parser.add_argument('--kitti_base_dir', type=str, required=True,
                         help='Base directory for KITTI dataset')
-    parser.add_argument('--map_path', type=str, required=True,
-                        help='Path to map points file (.npz)')
+    parser.add_argument('--map_path', type=str, required=False,
+                        help='Base path to map points file (optional, will use sequence-specific paths)')
     parser.add_argument('--output_dir_results', type=str, required=True,
                         help='Output directory for results')
     parser.add_argument('--n_threads', type=int, default=4,
@@ -233,7 +238,7 @@ def main():
         print(f"  Pre-computing data for sequence {seq_str}...")
         try:
             sequence_data[seq] = precompute_sequence_data(
-                seq, args.basalt_pose_dir, args.kitti_base_dir, args.map_path
+                seq, args.liodom_pose_dir, args.kitti_base_dir, args.map_path
             )
         except Exception as e:
             print(f"  ERROR pre-computing data for sequence {seq_str}: {e}")
@@ -271,8 +276,8 @@ def main():
             # Pass a deep copy of sequence data to each thread
             seq_data_copy = {
                 'gt_poses': sequence_data[seq]['gt_poses'].copy(),
-                'basalt_poses': sequence_data[seq]['basalt_poses'].copy(),
-                'ape_basalt': copy.deepcopy(sequence_data[seq]['ape_basalt']),  # Dictionary needs deep copy
+                'liodom_poses': sequence_data[seq]['liodom_poses'].copy(),
+                'ape_liodom': copy.deepcopy(sequence_data[seq]['ape_liodom']),  # Dictionary needs deep copy
                 'points_lane_map': sequence_data[seq]['points_lane_map']  # Map points can be shared
             }
             future = executor.submit(

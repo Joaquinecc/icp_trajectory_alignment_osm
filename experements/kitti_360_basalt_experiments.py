@@ -177,7 +177,7 @@ def run_single_experiment(
             'max_error_consecutive': max_error_consecutive,
             'valid_correspondence_threshold': 0.5,
             'trimming_ratio': 0.1,
-            'min_distance_threshold': 10.0,
+            'min_distance_threshold': 5.0,
             'icp_error_threshold': icp_error_threshold,
         }
         
@@ -233,10 +233,10 @@ def main():
     args = parser.parse_args()
     
     # Parameter ranges
-    pose_segment_sizes = [20, 50, 70, 100, 150, 200, 300]
-    knn_neighbors_list = [2, 5, 10, 20, 50, 100]
-    max_error_consecutive_list = [5, 10, 50, 100, 10000]
-    icp_error_threshold_list = [0.5, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0]
+    pose_segment_sizes = [50, 100, 150]
+    knn_neighbors_list = [10, 20, 50, 100]
+    max_error_consecutive_list = [10, 50, 100, 10000]
+    icp_error_threshold_list = [1.0, 1.5, 2.0]
     
     # Sequences: 00-10, skipping 03
     sequences = [0, 2, 3, 4, 5, 6, 7, 9, 10]
