@@ -69,8 +69,8 @@ cordinta_dict_360: Dict[str, Dict[str, float]] = {
         "origin_lon": 8.4411710247314,
     },
     "02": {
-        "origin_lat": 48.999686678156,  
-        "origin_lon": 8.4794003539197,
+        "origin_lat": 48.998543220534,  
+        "origin_lon": 8.4801168436309,
     },
     "03": {
         "origin_lat": 48.987645787582,
@@ -199,7 +199,7 @@ def get_kitti_sequence_info(seq_id: Union[int, str]) -> Tuple[str, str, List[int
     date, drive, frames = kitti_sequences[seq_id_str]
     return date, drive, frames
 
-def get_kitti_pose(path: str) -> np.ndarray:
+def read_kitti_pose(path: str) -> np.ndarray:
     """
     Load pose data from a text file in 3x4 matrix format.
 

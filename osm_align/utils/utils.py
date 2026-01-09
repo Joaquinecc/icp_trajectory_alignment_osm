@@ -103,98 +103,6 @@ def pose_to_homogenous_matrix(R: np.ndarray, T: np.ndarray) -> np.ndarray:
     T_hom[:3, 3] = T
     return T_hom
 
-def find_best_match_lane_point(
-    trajectory_points: np.ndarray, 
-    nearest_lane_points_index: List[List[int]], 
-    map_points: np.ndarray, 
-    map_neighbour_points: np.ndarray,
-    lanelet_direction_points: np.ndarray
-) -> np.ndarray:
-    """
-    Find intersections of trajectory normals with map segments, prioritizing parallel tangents.
-
-    For each trajectory point, shoots a normal ray and finds intersections with segments
-    defined by map points and their next points. Selects the intersection where the
-    segment's tangent direction is most parallel to the trajectory's tangent direction.
-
-    Parameters
-    ----------
-    trajectory_points : np.ndarray
-        Array of shape (N, 2) containing 2D trajectory points in [x, y] format.
-    nearest_lane_points_index : list of list of int
-        For each trajectory point, a list containing indices of its K nearest
-        neighbors in the map_points array.
-    map_points : np.ndarray
-        Array of shape (M, 2) containing 2D map points.
-    map_neighbour_points : np.ndarray
-        Array of shape (M, 2) containing the next point for each map point,
-        used to define line segments. Should have same length as map_points.
-
-    Returns
-    -------
-    intercept_points : np.ndarray
-        Array of shape (N, 2) containing intersection points. Points with no
-        valid intersection are set to NaN.
-
-    Examples
-    --------
-    >>> trajectory = np.array([[0, 0], [1, 0], [2, 0]])
-    >>> map_pts = np.array([[0, 1], [1, 1], [2, 1]])
-    >>> next_pts = np.array([[0.5, 1], [1.5, 1], [2.5, 1]])
-    >>> knn_idx = [[0], [1], [2]]
-    >>> result = find_best_match_lane_point(
-    ...     trajectory, knn_idx, map_pts, next_pts)
-    >>> result.shape
-    (3, 2)
-
-    Notes
-    -----
-    This algorithm prioritizes intersections where the map segment direction
-    is most parallel to the trajectory direction (parallel_score >= 0.7).
-    If a very good match is found (parallel_score >= 0.9), the search stops early.
-    """
-    intercept_points = np.full_like(trajectory_points, np.nan)
-
-    for i, p in enumerate(trajectory_points):
-        # Estimate tangent direction from trajectory
-        if 0 < i < len(trajectory_points) - 1:#Middle point
-            tangent_traj = trajectory_points[i + 1] - trajectory_points[i - 1]
-        elif i == len(trajectory_points) - 1:#Last point
-            tangent_traj = p-trajectory_points[i - 1]
-        elif i == 0:#First point
-            tangent_traj = trajectory_points[i + 1] - p
-        tangent_traj = tangent_traj / np.linalg.norm(tangent_traj)
-        normal_traj = np.array([tangent_traj[1], -tangent_traj[0]])  # Perpendicular to tangent
-
-        best_intercept_point = np.nan
-
-        nearest_lane_point_idx = nearest_lane_points_index[i]
-
-        for laned_idx in nearest_lane_point_idx:
-            parallel_score = np.dot(tangent_traj, lanelet_direction_points[laned_idx])
-            if parallel_score <0.95: #Similar road direction to pose yaw
-                continue
-            lane_point = map_points[laned_idx]
-            neighbour_point = map_neighbour_points[laned_idx]
-            # Find intersection of normal_traj at p with the segment ab
-            # Solve: a + t * ab = p + s * normal_traj
-            # => t * ab - s * normal_traj = (p - a)
-            ab = neighbour_point - lane_point
-            A = np.column_stack((ab, -normal_traj))
-            det = np.linalg.det(A)
-            if abs(det) > 1e-10:
-                sol = np.linalg.inv(A) @ (p - lane_point)
-                t, s = sol[0], sol[1]
-                # Only accept intersection if t in [0,1] (segment)
-                if 0.0 <= t <= 1.0:# There is an intersection
-                    proj = lane_point + t * ab
-                    # options_nn.append(proj)
-                    best_intercept_point = proj
-                    break
-                 
-        intercept_points[i] = best_intercept_point
-
-    return intercept_points
 
 def solveIcp2d(
     source: np.ndarray, 
@@ -373,9 +281,11 @@ def solve_trimmed_icp_2d(
     for _ in range(max_iterations):
         # Compute distances and sort to find best correspondences
         distances = np.linalg.norm(src_points - tgt_points, axis=1)
-        sorted_indices = np.argsort(distances)
-        best_indices = sorted_indices[:N_trimmed]
+        # sorted_indices = np.argsort(distances)
+        # best_indices = sorted_indices[:N_trimmed]
 
+        best_indices = np.argpartition(distances, N_trimmed)[:N_trimmed]
+        
         src_trimmed = src_points[best_indices]
         tgt_trimmed = tgt_points[best_indices]
 
