@@ -76,7 +76,7 @@ ros2 launch osm_align osm_align.launch.py
 ```bash
 ros2 launch osm_align osm_align.launch.py \
     frame_id:=02 \
-    pose_segment_size:=150 \
+    min_segment_size:=150 \
     icp_error_threshold:=1.5 \
     odom_topic:=/your_odom_topic
 ```
@@ -87,7 +87,7 @@ ros2 launch osm_align osm_align.launch.py \
 |-----------|---------|-------------|
 | `frame_id` | `"00"` | KITTI sequence identifier for coordinate system |
 | `map_lanelet_path` | `""` | Path to OSM lanelet file (auto-constructed if empty) |
-| `pose_segment_size` | `150` | Number of poses in sliding window buffer |
+| `min_segment_size` | `150` | Number of poses in sliding window buffer |
 | `knn_neighbors` | `100` | Number of nearest neighbors for spatial queries |
 | `valid_correspondence_threshold` | `0.9` | Minimum ratio of valid correspondences |
 | `icp_error_threshold` | `1.5` | Maximum ICP error for successful alignment |

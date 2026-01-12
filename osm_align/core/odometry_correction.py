@@ -31,7 +31,7 @@ class OdomCorrector():
         KD-tree built over `lane_points` for fast nearest-neighbor queries.
     args : Dict[str, Any]
         Configuration dictionary with the following keys:
-        - 'pose_segment_size' (int): size of the sliding window
+        - 'min_segment_size' (int): size of the sliding window
         - 'knn_neighbors' (int): number of neighbors for correspondence
         - 'valid_correspondence_threshold' (float): min fraction of valid
           correspondences required to run ICP
@@ -56,14 +56,14 @@ class OdomCorrector():
 
         self.lane_kdtree: Optional[cKDTree] = cKDTree(self.lane_points)
 
-        self.min_segment_size: int = args['pose_segment_size']
+        self.min_segment_size: int = args['min_segment_size']
         self.knn_neighbors: int = args['knn_neighbors']
-        self.valid_correspondence_threshold: float = args['valid_correspondence_threshold']
+        self.valid_correspondence_threshold: float = args.get('valid_correspondence_threshold', 0.5)
         self.icp_error_threshold: float = args['icp_error_threshold']
-        self.trimming_ratio: float = args['trimming_ratio']
-        self.min_distance_threshold: float = args['min_distance_threshold']
+        self.trimming_ratio: float = args.get('trimming_ratio', 0.1)
+        self.min_distance_threshold: float = args.get('min_distance_threshold', 3.0)
         self.max_error_consecutive: int = args.get('max_error_consecutive', 1000)
-        self.max_segment_size: int = args.get('max_segment_size', 3000)
+        self.max_segment_size: int = args.get('max_segment_size', 1000)
         #Initialize variables
         self.poses_corrected: np.ndarray = np.array([])
         self.lane_points_matched: np.ndarray = np.array([])
@@ -303,4 +303,4 @@ class OdomCorrector():
 
     
     def get_message_str(self, message_code: int) -> str:
-        return self.messages_info[message_code]
+        return self._get_messages_str(message_code)

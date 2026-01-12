@@ -22,7 +22,7 @@ from lanelet2.core import GPSPoint, BasicPoint3d
 #Python libraries
 from scipy.spatial.transform import Rotation
 import numpy as np
-from typing import List, Optional
+from typing import Optional
 import json
 import os
 
@@ -31,7 +31,6 @@ from osm_align.utils import utils
 from osm_align.core.odometry_correction import OdomCorrector
 
 
-MAP_MARKER_TOPIC = "osm_align/map_markers" #Topic for lanelet markers
 ODOM_ALIGNED_TOPIC = 'osm_align/odom' #Topic for aligned odometry
 GPS_CORRECTED_TOPIC = 'osm_align/gps' #Topic for odom corrected in gps string
 
@@ -40,21 +39,21 @@ class LaneCorrectionNode(Node):
     def __init__(self):
         super().__init__("lane_correction_node")
         self.get_logger().info("Lane correction node initialized")
-        self.declare_parameter('matrix_lane_points', '')
-        self.declare_parameter('odom_topic', '/liodom/odom')
+        self.declare_parameter('map_points_filepath', '')
+        self.declare_parameter('odom_topic_to_correct', '/liodom/odom')
         self.declare_parameter('initial_gps_topic', '/Inertial_Labs/initial_gps')
         self.declare_parameter('save_resuts_path', '/tmp/osm_align_results/')
-        self.declare_parameter('parameters_correction', '{"pose_segment_size": 100, "knn_neighbors": 10, "valid_correspondence_threshold": 0.9, "icp_error_threshold": 2.0, "trimming_ratio": 0.2, "min_distance_threshold": 10.0}')
+        self.declare_parameter('parameters_correction', '{"min_segment_size": 150, "knn_neighbors": 20, "icp_error_threshold": 1.5, "max_error_consecutive": 50}')
 
 
         self.parameters_correction: dict = json.loads(self.get_parameter('parameters_correction').get_parameter_value().string_value)
-        self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
-        self.matrix_lane_points: str = self.get_parameter('matrix_lane_points').get_parameter_value().string_value
+        self.odom_topic_to_correct: str = self.get_parameter('odom_topic_to_correct').get_parameter_value().string_value
+        self.map_points_filepath: str = self.get_parameter('map_points_filepath').get_parameter_value().string_value
         self.save_resuts_path: str = self.get_parameter('save_resuts_path').get_parameter_value().string_value
         self.initial_gps_topic: str = self.get_parameter('initial_gps_topic').get_parameter_value().string_value
         self.get_logger().info(f"Parameters:\n"
-                                f"  odom_topic: {self.odom_topic}\n"
-                                f"  matrix_lane_points: {self.matrix_lane_points}\n"
+                                f"  odom_topic_to_correct: {self.odom_topic_to_correct}\n"
+                                f"  map_points_filepath: {self.map_points_filepath}\n"
                                 f"  save_resuts_path: {self.save_resuts_path}\n"
                                 f"  parameters_correction: {self.parameters_correction}\n"
                                 f"  initial_gps_topic: {self.initial_gps_topic}")
@@ -63,18 +62,10 @@ class LaneCorrectionNode(Node):
 
         # Initialize variables
         self._utm_projector = None # UTM projector
-        self._utm_origin = None  # UTM origin (lat, lon, alt)
-        self.frame_count = 0 # Frame count
+        self._utm_origin = None  #  Initial GPS coordinates (lat, lon, alt)
+        self.frame_count = 0 # 
         self.poses_history = [] # Pose history
         self.trajectory_correction: Optional[OdomCorrector] = None #Trajectory correction
-        #QOS Settings
-        qos = QoSProfile(
-            depth=1,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-            reliability=ReliabilityPolicy.RELIABLE,
-        )
-
 
         #Initialize UTM projector and lanelet map
         self.sub_gps = self.create_subscription(
@@ -86,22 +77,22 @@ class LaneCorrectionNode(Node):
         #Main processing loop
         self.sub_odom = self.create_subscription(   
                 Odometry,
-                self.odom_topic,
+                self.odom_topic_to_correct,
                 self.odom_callback,
                 10
             )
 
-        #Publish results
-        self.pub_lanelet_markers = self.create_publisher(MarkerArray, MAP_MARKER_TOPIC, qos)
+
         #Publish corrected odometry
         self.pub_corrected_odom=self.create_publisher(Odometry, ODOM_ALIGNED_TOPIC, 10) 
-        #Publish corrected gps position
-        self.pub_corrected_gps = self.create_publisher(NavSatFix, GPS_CORRECTED_TOPIC, 10)
     
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
-        self.tf_to_map=utils.tf_matrix_from(self.tf_buffer, "odom", "map",timeout_sec=1.0)
-        self.get_logger().info(f"tf_to_map: {self.tf_to_map}")
+        # #Receive TF from odom to map
+        # self.tf_buffer = tf2_ros.Buffer()
+        # self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
+        # self.tf_to_map=utils.tf_matrix_from(self.tf_buffer, "odom", "map",timeout_sec=1.0)
+        # self.get_logger().info(f"tf_to_map: {self.tf_to_map}")
+
+        self.tf_to_map=np.eye(4)
 
     def odom_callback(self, msg: Odometry) -> None:  
         if self._utm_projector is None:
@@ -109,9 +100,9 @@ class LaneCorrectionNode(Node):
 
         pose_received=self.tf_to_map@utils.pose_to_4x4(msg.pose.pose)
         if self.trajectory_correction: 
-            pose_corrected, message_code=self.trajectory_correction.apply(pose_received)
+            pose_corrected, message_id=self.trajectory_correction.apply(pose_received)
 
-            message_str=self.trajectory_correction.get_message_str(message_code)
+            message_str=self.trajectory_correction._get_messages_str(message_id)
         else:
             pose_corrected=pose_received
             message_str="Not initialized"
@@ -131,7 +122,6 @@ class LaneCorrectionNode(Node):
         self.publish_odom(pose_received, msg.child_frame_id)
 
         if self._utm_projector:
-            self.publish_corrected_gps(pose_received)
             self.poses_history.append(utils.pose_to_4x4(pose_received))
 
    
@@ -152,8 +142,8 @@ class LaneCorrectionNode(Node):
         )
 
 
-        if self.matrix_lane_points:
-            loaded= np.load(self.matrix_lane_points)
+        if self.map_points_filepath:
+            loaded= np.load(self.map_points_filepath)
             self.points_lane_map = loaded['points_lane_map']
             gps_origin_map = loaded['origin_gps']
             self.get_logger().info(f"gps_origin_map: {gps_origin_map}")
@@ -167,37 +157,11 @@ class LaneCorrectionNode(Node):
             self.points_lane_map[:,:2]=self.points_lane_map[:,:2]-offset_xy
             self.points_lane_map[:,2:4]=self.points_lane_map[:,2:4]-offset_xy
 
-        self._initialize_odom_correction()
-
+            self._initialize_odom_correction()
+        else:
+            raise ValueError("No map points filepath provided, trajectory correction not possible")
         self.destroy_subscription(self.sub_gps) #Destroy the subscription to the gps topic, only needed for initialization
 
-
-    def publish_corrected_gps(self, pose) -> None:
-        """
-        Receive a pose object and using the UTM projector, convert it to gps coordinates.
-        Publish the gps coordinates in geojson format for web visualization.
-        
-        Parameters
-        ----------
-        pose : geometry_msgs.msg.Pose
-            Pose to publish.
-
-        Notes
-        -----
-        The pose is published as a GeoJSON point.
-        """
-
-        x = pose.position.x
-        y = pose.position.y
-        gp = self._utm_projector.reverse(BasicPoint3d(x, y, 0.0))   
-        
-        msg = NavSatFix()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = self.gps_frame_id
-        msg.latitude = gp.lat
-        msg.longitude = gp.lon
-        msg.altitude = gp.alt
-        self.pub_corrected_gps.publish(msg)
 
     def publish_odom(self, pose, base_frame_id: str) -> None:
 
@@ -214,14 +178,18 @@ class LaneCorrectionNode(Node):
         """
         Initialize the OdomCorrector object.
         """
-        args={
-            'pose_segment_size': self.parameters_correction['pose_segment_size'],
-            'knn_neighbors': self.parameters_correction['knn_neighbors'],
-            'valid_correspondence_threshold': self.parameters_correction['valid_correspondence_threshold'],
-            'icp_error_threshold': self.parameters_correction['icp_error_threshold'],
-            'trimming_ratio': self.parameters_correction['trimming_ratio'],
-            'min_distance_threshold': self.parameters_correction['min_distance_threshold'],
-        }
+        # Collect only known supported keys from parameters_correction dynamically
+        valid_keys = [
+            'min_segment_size',
+            'knn_neighbors',
+            'valid_correspondence_threshold',
+            'icp_error_threshold',
+            'trimming_ratio',
+            'min_distance_threshold',
+            'max_error_consecutive',
+            'max_segment_size',
+        ]
+        args = {k: self.parameters_correction[k] for k in valid_keys if k in self.parameters_correction}
         self.trajectory_correction=OdomCorrector(self.points_lane_map, args)
         self.get_logger().info(f"OdomCorrector initialized")
 

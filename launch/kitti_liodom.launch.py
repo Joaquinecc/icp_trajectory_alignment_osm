@@ -14,72 +14,56 @@ from launch.launch_description_sources import AnyLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
 import numpy as np  
 def generate_launch_description():
-    declare_map_lanelet_path = DeclareLaunchArgument(
-        'map_lanelet_path',
+    declare_map_points_filepath = DeclareLaunchArgument(
+        'map_points_filepath',
         default_value='',
-        description='Path to OSM lanelet file (empty = auto-construct from frame_id)'
-    )
-    declare_gps_topic = DeclareLaunchArgument(
-        'gps_topic',
-        default_value='/kitti/oxts/gps',
-        description='GPS topic'
+        description='Path to OSM points file (empty = auto-construct from frame_id)'
     )
     declare_bag_file = DeclareLaunchArgument(
         'bag_file',
         default_value='',
         description='Path to bag file'
     )
+    declare_odom_topic_to_correct = DeclareLaunchArgument(
+        'odom_topic_to_correct',
+        default_value='/liodom/odom',
+        # default_value='/Inertial_Labs/odom',
+        description='Odom topic to correct'
+    )
     declare_save_resuts_path = DeclareLaunchArgument(
         'save_resuts_path',
         default_value='/tmp/osm_align_results/',
         description='Save results path'
     )
-    declare_pose_segment_size = DeclareLaunchArgument(
-        'pose_segment_size',
-        default_value='20',
+    #Parameters for lane correction node
+    declare_min_segment_size = DeclareLaunchArgument(
+        'min_segment_size',
+        default_value='150',
         description='Pose segment size'
     )
     declare_knn_neighbors = DeclareLaunchArgument(
         'knn_neighbors',
-        default_value='10',
+        default_value='20',
         description='KNN neighbors'
-    )
-    declare_valid_correspondence_threshold = DeclareLaunchArgument(
-        'valid_correspondence_threshold',
-        default_value='0.5',
-        description='Valid correspondence threshold'
     )
     declare_icp_error_threshold = DeclareLaunchArgument(
         'icp_error_threshold',
-        default_value='1.0',
+        default_value='1.5',
         description='ICP error threshold'
     )
-    declare_trimming_ratio = DeclareLaunchArgument(
-        'trimming_ratio',   
-        default_value='0.1',
-        description='Trimming ratio'
+    declare_max_error_consecutive = DeclareLaunchArgument(
+        'max_error_consecutive',
+        default_value='50',
+        description='Max error consecutive'
     )
-    declare_min_distance_threshold = DeclareLaunchArgument(
-        'min_distance_threshold',
-        default_value='10.0', #5 meters
-        description='Min distance threshold'
-    )
-    declare_viz_marker_lanelets = DeclareLaunchArgument(
-        'viz_marker_lanelets',
-        default_value='true',
-        description='Viz marker lanelets'
-    )
+
+
+
     declare_viz = DeclareLaunchArgument(
         'viz',
         default_value='true',
         description='Viz'
     )
-    declare_estimate_enu_yaw_offset = DeclareLaunchArgument(
-        'estimate_enu_yaw_offset',
-        default_value='false',
-        description='Estimate ENU yaw offset'
-    )
-
 
     liodom_launch = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(
@@ -95,7 +79,32 @@ def generate_launch_description():
             'use_imu': 'true',
         }.items(),
     )
-    # rviz2 node
+
+    odometry_correction_node = Node(
+        package='osm_align',
+        executable='lane_correction_node',
+        name='odometry_correction_node',
+        output='screen',
+        parameters=[{
+            'map_points_filepath': LaunchConfiguration('map_points_filepath'),
+            'odom_topic_to_correct': LaunchConfiguration('odom_topic_to_correct'),
+            'initial_gps_topic': '/kitti/oxts/gps',
+            'parameters_correction': ParameterValue([
+                TextSubstitution(text='{"min_segment_size": '),
+                LaunchConfiguration('min_segment_size'),
+                TextSubstitution(text=', "knn_neighbors": '),
+                LaunchConfiguration('knn_neighbors'),
+                TextSubstitution(text=', "icp_error_threshold": '),
+                LaunchConfiguration('icp_error_threshold'),
+                TextSubstitution(text=', "max_error_consecutive": '),
+                LaunchConfiguration('max_error_consecutive'),
+                TextSubstitution(text='}'),
+            ], value_type=str),
+            'save_resuts_path': LaunchConfiguration('save_resuts_path'),
+        }],
+    )
+    
+        # rviz2 node
     rviz2 = Node(
         package='rviz2',
         executable='rviz2',
@@ -104,36 +113,6 @@ def generate_launch_description():
         output='screen',
         condition=IfCondition(LaunchConfiguration('viz'))  
     )
-    odometry_correction_node = Node(
-        package='osm_align',
-        executable='lane_correction_node',
-        name='odometry_correction_node',
-        output='screen',
-        parameters=[{
-            'map_lanelet_path': LaunchConfiguration('map_lanelet_path'),
-            'odom_topic': '/liodom/odom',
-            'gps_topic': LaunchConfiguration('gps_topic'),
-            'parameters_correction': ParameterValue([
-                TextSubstitution(text='{"pose_segment_size": '),
-                LaunchConfiguration('pose_segment_size'),
-                TextSubstitution(text=', "knn_neighbors": '),
-                LaunchConfiguration('knn_neighbors'),
-                TextSubstitution(text=', "valid_correspondence_threshold": '),
-                LaunchConfiguration('valid_correspondence_threshold'),
-                TextSubstitution(text=', "icp_error_threshold": '),
-                LaunchConfiguration('icp_error_threshold'),
-                TextSubstitution(text=', "trimming_ratio": '),
-                LaunchConfiguration('trimming_ratio'),
-                TextSubstitution(text=', "min_distance_threshold": '),
-                LaunchConfiguration('min_distance_threshold'),
-                TextSubstitution(text='}'),
-            ], value_type=str),
-            'save_resuts_path': LaunchConfiguration('save_resuts_path'),
-            'viz_marker_lanelets': LaunchConfiguration('viz_marker_lanelets'),
-            'estimate_enu_yaw_offset': LaunchConfiguration('estimate_enu_yaw_offset'),
-        }],
-    )
-    
     
 
     play_ros_bag = ExecuteProcess(
@@ -150,33 +129,34 @@ def generate_launch_description():
             name='map_to_odom',
             arguments=[
                 '0', '0', '0',          # x y z
-            '-1.57079632679', '0', '-1.57079632679',  # yaw pitch roll = -π/2, 0, -π/2
+                '0', '0', '0',  # yaw pitch roll = -π/2, 0, -π/2
                 'odom', 'map'
             ],
             parameters=[{'use_sim_time': True}], 
             output='screen'
-    )
+    )    #Bridge socket
+    bridge_socket = ExecuteProcess(
+        cmd=['ros2', 'launch', 'rosbridge_server', 'rosbridge_websocket_launch.xml', "delay_between_messages:=0.0"],
+        output='screen',
+         condition=IfCondition(LaunchConfiguration('viz'))
+    )   
 
     
 
     return LaunchDescription([
-        declare_map_lanelet_path,
-        declare_gps_topic,
+        declare_map_points_filepath,
         declare_save_resuts_path,
-        declare_estimate_enu_yaw_offset,
-        declare_viz_marker_lanelets,
-        declare_pose_segment_size,
+        declare_min_segment_size,
         declare_knn_neighbors,
-        declare_valid_correspondence_threshold,
+        declare_odom_topic_to_correct,
         declare_icp_error_threshold,
-        declare_trimming_ratio,
-        declare_min_distance_threshold,
+        declare_max_error_consecutive,
         declare_viz,
         declare_bag_file,
         #TFs
         tf_map_to_odom,
         #Viz
-        # bridge_socket,
+        bridge_socket,
         rviz2 ,
         play_ros_bag,
        #Nodes

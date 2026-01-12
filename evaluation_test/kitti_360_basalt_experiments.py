@@ -106,7 +106,7 @@ def precompute_sequence_data(
 
 def run_single_experiment(
     seq: int,
-    pose_segment_size: int,
+    min_segment_size: int,
     knn_neighbors: int,
     max_error_consecutive: int,
     icp_error_threshold: float,
@@ -121,7 +121,7 @@ def run_single_experiment(
     ----------
     seq : int
         Sequence number (0-10, skipping 3)
-    pose_segment_size : int
+    min_segment_size : int
         Size of pose segment window
     knn_neighbors : int
         Number of KNN neighbors
@@ -154,7 +154,7 @@ def run_single_experiment(
         ape_basalt = seq_data['ape_basalt']  # Already a copy
         points_lane_map = seq_data['points_lane_map']
 
-        folder_name = f"r_{seq_str}_{pose_segment_size}_{knn_neighbors}_{max_error_consecutive}_{icp_error_threshold}"
+        folder_name = f"r_{seq_str}_{min_segment_size}_{knn_neighbors}_{max_error_consecutive}_{icp_error_threshold}"
         output_folder = os.path.join(output_dir_results, folder_name)
         
         # Check if experiment already completed
@@ -167,7 +167,7 @@ def run_single_experiment(
            os.path.exists(result_basalt_path) and \
            os.path.exists(result_corrected_path):
             with lock:
-                print(f"Skipping (already completed): seq={seq_str}, pose_segment_size={pose_segment_size}, "
+                print(f"Skipping (already completed): seq={seq_str}, min_segment_size={min_segment_size}, "
                       f"knn_neighbors={knn_neighbors}, max_error_consecutive={max_error_consecutive}, "
                       f"icp_error_threshold={icp_error_threshold}")
             return
@@ -176,7 +176,7 @@ def run_single_experiment(
             
         # Setup correction parameters
         args = {
-            'pose_segment_size': pose_segment_size,
+            'min_segment_size': min_segment_size,
             'knn_neighbors': knn_neighbors,
             'max_error_consecutive': max_error_consecutive,
             'valid_correspondence_threshold': 0.5,
@@ -209,7 +209,7 @@ def run_single_experiment(
         execution_time = time.time() - start_time
         
         with lock:
-            print(f"Completed: seq={seq_str}, pose_segment_size={pose_segment_size}, "
+            print(f"Completed: seq={seq_str}, min_segment_size={min_segment_size}, "
                   f"knn_neighbors={knn_neighbors}, max_error_consecutive={max_error_consecutive}, "
                   f"icp_error_threshold={icp_error_threshold}")
             print(f"  Basalt APE RMSE: {ape_basalt['rmse']:.4f}")
@@ -218,7 +218,7 @@ def run_single_experiment(
     
     except Exception as e:
         with lock:
-            print(f"ERROR in seq={seq_str}, pose_segment_size={pose_segment_size}, "
+            print(f"ERROR in seq={seq_str}, min_segment_size={min_segment_size}, "
                   f"knn_neighbors={knn_neighbors}, max_error_consecutive={max_error_consecutive}, "
                   f"icp_error_threshold={icp_error_threshold}: {e}")
 
@@ -241,7 +241,7 @@ def main():
     args = parser.parse_args()
     
     # Parameter ranges
-    pose_segment_sizes = [50, 100, 150]
+    min_segment_sizes = [50, 100, 150]
     knn_neighbors_list = [10, 20, 50, 100]
     max_error_consecutive_list = [10, 50, 100, 10000]
     icp_error_threshold_list = [1.0, 1.5, 2.0]
@@ -273,13 +273,13 @@ def main():
     
     # Generate all experiment combinations
     experiments = []
-    for pose_segment_size in pose_segment_sizes:
+    for min_segment_size in min_segment_sizes:
         for knn_neighbors in knn_neighbors_list:
             for max_error_consecutive in max_error_consecutive_list:
                 for icp_error_threshold in icp_error_threshold_list:
                     for seq in sequences:
                         experiments.append((
-                            seq, pose_segment_size, knn_neighbors, max_error_consecutive, icp_error_threshold
+                            seq, min_segment_size, knn_neighbors, max_error_consecutive, icp_error_threshold
                         ))
     
     total_experiments = len(experiments)
@@ -294,7 +294,7 @@ def main():
     # Run experiments with process pool
     with ProcessPoolExecutor(max_workers=args.n_threads) as executor:
         futures = []
-        for seq, pose_segment_size, knn_neighbors, max_error_consecutive, icp_error_threshold in experiments:
+        for seq, min_segment_size, knn_neighbors, max_error_consecutive, icp_error_threshold in experiments:
             # Skip if sequence data wasn't pre-computed successfully
             if seq not in sequence_data:
                 continue
@@ -309,7 +309,7 @@ def main():
             }
             future = executor.submit(
                 run_single_experiment,
-                seq, pose_segment_size, knn_neighbors, max_error_consecutive, icp_error_threshold,
+                seq, min_segment_size, knn_neighbors, max_error_consecutive, icp_error_threshold,
                 args.output_dir_results, seq_data_copy, lock
             )
             futures.append(future)

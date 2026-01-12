@@ -34,7 +34,7 @@ ros2 launch osm_align osm_align.launch.py \
 # Use larger pose history for more robust alignment
 ros2 launch osm_align osm_align.launch.py \
     frame_id:=00 \
-    pose_segment_size:=150 \
+    min_segment_size:=150 \
     min_distance_threshold:=15.0
 ```
 
@@ -60,7 +60,7 @@ ros2 launch osm_align osm_align.launch.py \
 |-----------|---------|-------------|
 | `frame_id` | `'00'` | KITTI sequence identifier (e.g., '00', '01', '02', etc.) |
 | `map_lanelet_path` | `''` (auto-construct) | Path to OSM lanelet file |
-| `pose_segment_size` | `150` | Number of poses in sliding window buffer |
+| `min_segment_size` | `150` | Number of poses in sliding window buffer |
 | `knn_neighbors` | `100` | Number of nearest neighbors for KD-tree queries |
 | `valid_correspondence_threshold` | `0.9` | Minimum ratio of valid correspondences |
 | `icp_error_threshold` | `1.5` | Maximum ICP error for successful alignment |
@@ -77,7 +77,7 @@ ros2 launch osm_align osm_align.launch.py \
 - **`trimming_ratio`**: Increase to be more conservative against outliers; decrease if losing inliers
 
 ### Buffer Management
-- **`pose_segment_size`**: Larger values (100-200) for highways, smaller (30-80) for urban areas
+- **`min_segment_size`**: Larger values (100-200) for highways, smaller (30-80) for urban areas
 - **`min_distance_threshold`**: Adjust based on expected motion (5-10m for urban, 15-30m for highways)
 
 ### Spatial Search
@@ -91,7 +91,7 @@ You can also run the node directly with ROS2 parameter syntax:
 # Run node directly with parameters
 ros2 run osm_align kitti_odometry --ros-args \
     -p frame_id:=02 \
-    -p pose_segment_size:=150 \
+    -p min_segment_size:=150 \
     -p icp_error_threshold:=1.5
 ```
 
@@ -102,7 +102,7 @@ ros2 run osm_align kitti_odometry --ros-args \
 - Verify that the `odom_topic` is being published
 
 ### Poor alignment performance  
-- Increase `pose_segment_size` for more trajectory data
+- Increase `min_segment_size` for more trajectory data
 - Adjust `icp_error_threshold` based on expected accuracy
 - Modify `knn_neighbors` for your map density
 

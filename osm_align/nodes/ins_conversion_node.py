@@ -1,4 +1,8 @@
 # ROS2
+"""
+Node for converting INS data to NavSatFix and Imu messages.
+It subscribes to INS data, GPS data, and IMU data and publishes the converted messages.
+"""
 from __future__ import annotations
 import rclpy
 from rclpy.node import Node
@@ -41,22 +45,9 @@ class INSConversionNode(Node):
     def __init__(self) -> None:
         super().__init__("ins_conversion_node")
 
-        # Declare parameters for scaling factors
-        # Gyro scaling factor KG (depends on sensor range configuration)
-        # 450 deg/s → KG=50, 950 deg/s → KG=20, 2000 deg/s → KG=10
-        self.declare_parameter('gyro_scale_factor', 1.0)  # Default for 950 deg/s range
-        
-        # Accelerometer scaling factor KA (depends on sensor range configuration)
-        # 8g → KA=4000, 15g → KA=2000, 40g → KA=500
-        self.declare_parameter('accel_scale_factor', 1.0)  # Default for 15g range
-        
         # Base frame id parameter
         self.declare_parameter('base_frame_id', 'base_link')
-        
-        self.KG = self.get_parameter('gyro_scale_factor').value
-        self.KA = self.get_parameter('accel_scale_factor').value
         self.base_frame_id = self.get_parameter('base_frame_id').value
-        
         # Conversion constants
         self.DEG_TO_RAD = math.pi / 180.0
         self.G_TO_MS2 = 9.80665  # Standard gravity in m/s²
@@ -88,7 +79,6 @@ class INSConversionNode(Node):
         # Dynamic TF broadcaster for odom to base_link transform
         self.tf_broadcaster = TransformBroadcaster(self)
         
-        self.get_logger().info(f"Gyro scale factor (KG): {self.KG}, Accel scale factor (KA): {self.KA}")
         self.latest_coords = None
 
         self.proj= None
@@ -193,18 +183,16 @@ class INSConversionNode(Node):
         imu_msg = Imu()
         imu_msg.header.stamp = msg.header.stamp
         imu_msg.header.frame_id = msg.header.frame_id
-        self.KG=1
-        self.KA=1
 
         # Angular velocity: (raw / KG) * (π/180) to convert deg/s to rad/s
-        gx = (float(msg.gyro.x) / self.KG) * self.DEG_TO_RAD
-        gy = (float(msg.gyro.y) / self.KG) * self.DEG_TO_RAD
-        gz = (float(msg.gyro.z) / self.KG) * self.DEG_TO_RAD
+        gx = (float(msg.gyro.x)) * self.DEG_TO_RAD
+        gy = (float(msg.gyro.y)) * self.DEG_TO_RAD
+        gz = (float(msg.gyro.z)) * self.DEG_TO_RAD
 
         # Linear acceleration: (raw / KA) * 9.80665 to convert g to m/s²
-        ax = (float(msg.accel.x) / self.KA) * self.G_TO_MS2
-        ay = (float(msg.accel.y) / self.KA) * self.G_TO_MS2
-        az = (float(msg.accel.z) / self.KA) * self.G_TO_MS2
+        ax = (float(msg.accel.x)) * self.G_TO_MS2
+        ay = (float(msg.accel.y)) * self.G_TO_MS2
+        az = (float(msg.accel.z)) * self.G_TO_MS2
 
         # Sanity check: Drop message if any x/y/z is nan or inf
         import math
