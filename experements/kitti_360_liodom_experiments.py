@@ -3,9 +3,10 @@
 import argparse
 import os
 import sys
+import time
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
 from utils_exp import compute_ape_metrics, save_poses_to_file, save_ape_to_csv
 import math
 
@@ -99,7 +100,7 @@ def precompute_sequence_data(
     liodom_poses[:, :2, -1] = (tf_enu[:2, :2] @ liodom_poses[:, :2, -1].T).T
     
     # Transform GT poses to Velodyne frame (liodom poses are already in velodyne frame)
-    gt_poses = gt_poses @ tf_cam_to_velo
+    # gt_poses = gt_poses @ tf_cam_to_velo
     
     # Pre-compute APE metrics for liodom poses
     ape_liodom = compute_ape_metrics(gt_poses, liodom_poses[valid_index])
@@ -121,7 +122,7 @@ def run_single_experiment(
     icp_error_threshold: float,
     output_dir_results: str,
     seq_data: dict,
-    lock: threading.Lock
+    lock: multiprocessing.Lock
 ):
     """
     Run a single experiment for a given sequence and parameter combination.
@@ -147,12 +148,15 @@ def run_single_experiment(
         - valid_index: Valid index array
         - ape_liodom: Pre-computed APE metrics for liodom
         - points_lane_map: Map points
-    lock : threading.Lock
-        Thread lock for printing
+    lock : multiprocessing.Lock
+        Process lock for synchronized printing
     """
     seq_str = f"{seq:02d}"
 
     try:
+        # Start timing
+        start_time = time.time()
+        
         # Use pre-computed sequence data (passed as copy)
         gt_poses = seq_data['gt_poses']
         liodom_poses = seq_data['liodom_poses']
@@ -211,12 +215,17 @@ def run_single_experiment(
         save_ape_to_csv(ape_liodom, result_liodom_path)
         save_ape_to_csv(ape_corrected, result_corrected_path)
         
+        # Calculate execution time
+        execution_time = time.time() - start_time
+        
         with lock:
             print(f"Completed: seq={seq_str}, pose_segment_size={pose_segment_size}, "
                   f"knn_neighbors={knn_neighbors}, max_error_consecutive={max_error_consecutive}, "
                   f"icp_error_threshold={icp_error_threshold}")
             print(f"  Liodom APE RMSE: {ape_liodom['rmse']:.4f}")
             print(f"  Corrected APE RMSE: {ape_corrected['rmse']:.4f}")
+            print(f"  Execution time: {execution_time:.2f} seconds")
+
     
     except Exception as e:
         with lock:
@@ -237,13 +246,13 @@ def main():
                         help='Path to calibration file for KITTI 360')
     parser.add_argument('--output_dir_results', type=str, required=True,
                         help='Output directory for results')
-    parser.add_argument('--n_threads', type=int, default=4,
-                        help='Number of threads to use (default: 4)')
+    parser.add_argument('--n_threads', type=int, default=os.cpu_count()-2,
+                        help='Number of processes to use (default: cpu_count-2)')
     
     args = parser.parse_args()
     
     # Parameter ranges
-    pose_segment_sizes = [50, 100, 150]
+    pose_segment_sizes = [ 150, 50, 100,]
     knn_neighbors_list = [10, 20, 50, 100]
     max_error_consecutive_list = [10, 50, 100, 10000]
     icp_error_threshold_list = [1.0, 1.5, 2.0]
@@ -286,21 +295,22 @@ def main():
     
     total_experiments = len(experiments)
     print(f"Total experiments: {total_experiments}")
-    print(f"Using {args.n_threads} threads")
+    print(f"Using {args.n_threads} processes")
     print(f"Output directory: {args.output_dir_results}")
     
-    # Thread lock for printing
-    lock = threading.Lock()
+    # Process lock for synchronized printing (using Manager for picklable lock)
+    manager = multiprocessing.Manager()
+    lock = manager.Lock()
     
-    # Run experiments with thread pool
-    with ThreadPoolExecutor(max_workers=args.n_threads) as executor:
+    # Run experiments with process pool
+    with ProcessPoolExecutor(max_workers=args.n_threads) as executor:
         futures = []
         for seq, pose_segment_size, knn_neighbors, max_error_consecutive, icp_error_threshold in experiments:
             # Skip if sequence data wasn't pre-computed successfully
             if seq not in sequence_data:
                 continue
                 
-            # Pass a deep copy of sequence data to each thread
+            # Pass a deep copy of sequence data to each process
             seq_data_copy = {
                 'gt_poses': sequence_data[seq]['gt_poses'].copy(),
                 'liodom_poses': sequence_data[seq]['liodom_poses'].copy(),

@@ -3,9 +3,10 @@
 import argparse
 import os
 import sys
+import time
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
 from utils_exp import compute_ape_metrics, save_poses_to_file, save_ape_to_csv
 
 import copy
@@ -111,7 +112,7 @@ def run_single_experiment(
     icp_error_threshold: float,
     output_dir_results: str,
     seq_data: dict,
-    lock: threading.Lock
+    lock: multiprocessing.Lock
 ):
     """
     Run a single experiment for a given sequence and parameter combination.
@@ -137,12 +138,15 @@ def run_single_experiment(
         - valid_index: Valid index array
         - ape_basalt: Pre-computed APE metrics for basalt
         - points_lane_map: Map points
-    lock : threading.Lock
-        Thread lock for printing
+    lock : multiprocessing.Lock
+        Process lock for synchronized printing
     """
     seq_str = f"{seq:02d}"
 
     try:
+        # Start timing
+        start_time = time.time()
+        
         # Use pre-computed sequence data (passed as copy)
         gt_poses = seq_data['gt_poses']
         basalt_poses = seq_data['basalt_poses']
@@ -201,12 +205,16 @@ def run_single_experiment(
         save_ape_to_csv(ape_basalt, result_basalt_path)
         save_ape_to_csv(ape_corrected, result_corrected_path)
         
+        # Calculate execution time
+        execution_time = time.time() - start_time
+        
         with lock:
             print(f"Completed: seq={seq_str}, pose_segment_size={pose_segment_size}, "
                   f"knn_neighbors={knn_neighbors}, max_error_consecutive={max_error_consecutive}, "
                   f"icp_error_threshold={icp_error_threshold}")
             print(f"  Basalt APE RMSE: {ape_basalt['rmse']:.4f}")
             print(f"  Corrected APE RMSE: {ape_corrected['rmse']:.4f}")
+            print(f"  Execution time: {execution_time:.2f} seconds")
     
     except Exception as e:
         with lock:
@@ -227,8 +235,8 @@ def main():
                         help='Path to calibration file for KITTI 360')
     parser.add_argument('--output_dir_results', type=str, required=True,
                         help='Output directory for results')
-    parser.add_argument('--n_threads', type=int, default=4,
-                        help='Number of threads to use (default: 4)')
+    parser.add_argument('--n_threads', type=int, default=os.cpu_count()-2,
+                        help='Number of processes to use (default: cpu_count-2)')
     
     args = parser.parse_args()
     
@@ -244,7 +252,7 @@ def main():
     # Create output directory
     os.makedirs(args.output_dir_results, exist_ok=True)
     
-    # Compute tf_cam_to_velo once (same for all threads)
+    # Compute tf_cam_to_velo once (same for all processes)
     tf_cam_to_velo = read_calib_file_kitti_360(args.calib_path)
     
     # Pre-compute sequence data for all sequences
@@ -253,9 +261,13 @@ def main():
     for seq in sequences:
         seq_str = f"{seq:02d}"
         print(f"  Pre-computing data for sequence {seq_str}...")
-        sequence_data[seq] = precompute_sequence_data(
-            seq, args.basalt_pose_dir, args.kitti_base_dir, args.map_path, tf_cam_to_velo
-        )
+        try:
+            sequence_data[seq] = precompute_sequence_data(
+                seq, args.basalt_pose_dir, args.kitti_base_dir, args.map_path, tf_cam_to_velo
+            )
+        except Exception as e:
+            print(f"  ERROR pre-computing data for sequence {seq_str}: {e}")
+            continue
        
     print(f"Pre-computed data for {len(sequence_data)} sequences")
     
@@ -272,21 +284,22 @@ def main():
     
     total_experiments = len(experiments)
     print(f"Total experiments: {total_experiments}")
-    print(f"Using {args.n_threads} threads")
+    print(f"Using {args.n_threads} processes")
     print(f"Output directory: {args.output_dir_results}")
     
-    # Thread lock for printing
-    lock = threading.Lock()
+    # Process lock for synchronized printing (using Manager for picklable lock)
+    manager = multiprocessing.Manager()
+    lock = manager.Lock()
     
-    # Run experiments with thread pool
-    with ThreadPoolExecutor(max_workers=args.n_threads) as executor:
+    # Run experiments with process pool
+    with ProcessPoolExecutor(max_workers=args.n_threads) as executor:
         futures = []
         for seq, pose_segment_size, knn_neighbors, max_error_consecutive, icp_error_threshold in experiments:
             # Skip if sequence data wasn't pre-computed successfully
             if seq not in sequence_data:
                 continue
                 
-            # Pass a deep copy of sequence data to each thread
+            # Pass a deep copy of sequence data to each process
             seq_data_copy = {
                 'gt_poses': sequence_data[seq]['gt_poses'].copy(),
                 'basalt_poses': sequence_data[seq]['basalt_poses'].copy(),
