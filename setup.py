@@ -34,7 +34,7 @@ setup(
         'console_scripts': [
             'lane_correction_node = osm_align.nodes.lane_correction_node:main',
             'ins_conversion_node = osm_align.nodes.ins_conversion_node:main',
-            'liodom_ouster_enu_corrector_node = osm_align.nodes.liodom_ouster_enu_corrector_node:main',
+            'odom_enu_correction_node = osm_align.nodes.odom_enu_correction_node:main',
             'odom2gps_node = osm_align.nodes.odom2gps_node:main',
         ],
     },

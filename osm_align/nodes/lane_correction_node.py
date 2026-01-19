@@ -8,16 +8,12 @@ It also publishes the corrected gps position in geojson format for web visualiza
 #ROS2
 import rclpy
 from rclpy.node import Node
-from rclpy.duration import Duration
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import NavSatFix
-from rclpy.qos import QoSProfile, QoSHistoryPolicy, QoSDurabilityPolicy, ReliabilityPolicy
-from visualization_msgs.msg import Marker, MarkerArray
-from geometry_msgs.msg import Point
 import tf2_ros
 #Lanelet2
 import lanelet2
-from lanelet2.core import GPSPoint, BasicPoint3d
+from lanelet2.core import GPSPoint
 
 #Python libraries
 from scipy.spatial.transform import Rotation
@@ -41,7 +37,7 @@ class LaneCorrectionNode(Node):
         self.get_logger().info("Lane correction node initialized")
         self.declare_parameter('map_points_filepath', '')
         self.declare_parameter('odom_topic_to_correct', '/liodom/odom')
-        self.declare_parameter('initial_gps_topic', '/Inertial_Labs/initial_gps')
+        self.declare_parameter('initial_gps_topic', '/kitti/oxts/gps')
         self.declare_parameter('save_resuts_path', '/tmp/osm_align_results/')
         self.declare_parameter('parameters_correction', '{"min_segment_size": 150, "knn_neighbors": 20, "icp_error_threshold": 1.5, "max_error_consecutive": 50}')
 
@@ -85,14 +81,21 @@ class LaneCorrectionNode(Node):
 
         #Publish corrected odometry
         self.pub_corrected_odom=self.create_publisher(Odometry, ODOM_ALIGNED_TOPIC, 10) 
-    
-        # #Receive TF from odom to map
-        # self.tf_buffer = tf2_ros.Buffer()
-        # self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
-        # self.tf_to_map=utils.tf_matrix_from(self.tf_buffer, "odom", "map",timeout_sec=1.0)
-        # self.get_logger().info(f"tf_to_map: {self.tf_to_map}")
-
+        #Receive TF from odom to map
         self.tf_to_map=np.eye(4)
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
+        try:
+            self.tf_to_map = utils.tf_matrix_from(self.tf_buffer,target="enu", source="odom", timeout_sec=5.0)
+            self.get_logger().info(f"tf_to_map: {self.tf_to_map}")
+        except Exception as e:
+            self.get_logger().error(f"Failed to get TF from 'odom' to 'enu': {e}")
+
+        # Extract yaw angle from the tf_to_map rotation matrix (Z axis Euler)
+        rot = Rotation.from_matrix(self.tf_to_map[:3,:3])
+        _, _, yaw = rot.as_euler('xyz', degrees=True)
+        self.get_logger().info(f"Yaw angle (Z axis, degrees) from odom to enu: {yaw:.2f}")
+
 
     def odom_callback(self, msg: Odometry) -> None:  
         if self._utm_projector is None:

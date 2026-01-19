@@ -8,12 +8,13 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch.actions import ExecuteProcess
-from launch.actions import IncludeLaunchDescription
 from launch.substitutions import  TextSubstitution
-from launch.launch_description_sources import AnyLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
 import numpy as np
 from launch.substitutions import PythonExpression
+
+
+
 def generate_launch_description():
     declare_map_points_filepath = DeclareLaunchArgument(
         'map_points_filepath',
@@ -27,7 +28,7 @@ def generate_launch_description():
     )
     declare_odom_topic_to_correct = DeclareLaunchArgument(
         'odom_topic_to_correct',
-        default_value='/liodom/odom_enu',
+        default_value='/liodom/odom',
         # default_value='/Inertial_Labs/odom',
         description='Odom topic to correct'
     )
@@ -35,6 +36,11 @@ def generate_launch_description():
         'save_resuts_path',
         default_value='/tmp/osm_align_results/',
         description='Save results path'
+    )
+    declare_gps_topic = DeclareLaunchArgument(
+        'gps_topic',
+        default_value='/kitti/oxts/gps',
+        description='GPS topic'
     )
     declare_viz = DeclareLaunchArgument(
         'viz',
@@ -64,51 +70,54 @@ def generate_launch_description():
         description='Max error consecutive'
     )
 
-
-
-
-    ins_conversion_node = Node(
-        package='osm_align',
-        executable='ins_conversion_node',
-        name='ins_conversion_node',
-        output='screen',
-    )
     
-    liodom_launch = IncludeLaunchDescription(
-        AnyLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory("liodom"),
-                "launch",
-                "liodom_ouster_launch.xml",
-            )
-        ),
-        launch_arguments={
-            'viz': 'false',
-            'mapping': 'false',
-            'use_imu': 'false',
-            'publish_tf': 'false',
-        }.items(),
-        condition=IfCondition(
-            PythonExpression([
-                "'liodom' in '",
-                LaunchConfiguration('odom_topic_to_correct'),
-                "'",
-            ])
-        ),
-    )
-    liodom_ouster_enu_corrector_node = Node(
-        package='osm_align',
-        executable='liodom_ouster_enu_corrector_node',
-        name='liodom_ouster_enu_corrector_node',
+    liodom_node = Node(
+        package='liodom',
+        executable='liodom_node',
+        name='liodom',
+        namespace='liodom',
         output='screen',
-        condition=IfCondition(
-          PythonExpression([
-                "'liodom' in '",
-                LaunchConfiguration('odom_topic_to_correct'),
-                "'",
-            ])
-        ),
+        respawn=False,
+        parameters=[{
+            'min_range': 3.0,
+            'max_range': 50.0,
+            'lidar_type': 0,
+            'scan_lines': 64,
+            'scan_regions': 8,
+            'edges_per_region': 10,
+            'prev_frames': 15,
+            'fixed_frame': 'odom',
+            'base_frame': 'base_link',
+            'laser_frame': 'velo_link',
+            'use_imu': True,
+            'save_results': False,
+            'save_results_dir': '/tmp/save_results/',
+            'mapping': False,
+            'publish_tf': False,
+            'use_sim_time': True,
+        }],
+        remappings=[
+            ('points', '/kitti/velo/pointcloud'),
+            ('imu', '/kitti/oxts/imu'),
+            ('map', '/liodom_mapper/map_local'),
+        ]
     )
+
+
+    
+    odom_enu_correction_node = Node(
+        package='osm_align',
+        executable='odom_enu_correction_node',
+        name='odom_enu_correction_node',
+        output='screen',
+        parameters=[{
+            'odom_topic': LaunchConfiguration('odom_topic_to_correct'),
+            'gps_topic': LaunchConfiguration('gps_topic'),
+            'odom_output_topic': '/liodom/odom_enu',
+        }]
+    )
+
+    
 
     odometry_correction_node = Node(
         package='osm_align',
@@ -117,8 +126,8 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'map_points_filepath': LaunchConfiguration('map_points_filepath'),
-            'odom_topic_to_correct': LaunchConfiguration('odom_topic_to_correct'),
-            'initial_gps_topic': '/Inertial_Labs/initial_gps',
+            'odom_topic_to_correct': '/liodom/odom_enu',
+            'initial_gps_topic': LaunchConfiguration('gps_topic'),
             'parameters_correction': ParameterValue([
                 TextSubstitution(text='{"min_segment_size": '),
                 LaunchConfiguration('min_segment_size'),
@@ -140,11 +149,11 @@ def generate_launch_description():
         name='odom2gps_node',
         output='screen',
         parameters=[{
-            'odom_topic': "/osm_align/odom",
-            'gps_topic': '/Inertial_Labs/initial_gps',
+            # 'odom_topic': "/osm_align/odom",
+            'odom_topic': "/liodom/odom_enu",
+            'gps_topic': LaunchConfiguration('gps_topic'),
         }],
     )
-
 
     #Play ROS bag
     play_ros_bag = ExecuteProcess(
@@ -159,7 +168,7 @@ def generate_launch_description():
         package='rviz2',
         executable='rviz2',
         name='rviz2',
-        arguments=['-d', os.path.join(get_package_share_directory("osm_align"), "rviz", "liodom_ins_ouster.rviz")],
+        arguments=['-d', os.path.join(get_package_share_directory("osm_align"), "rviz", "liodom_kitti.rviz")],
         output='screen',
         condition=IfCondition(LaunchConfiguration('viz'))  
     )
@@ -200,19 +209,19 @@ def generate_launch_description():
         declare_max_error_consecutive,
         declare_viz,
         declare_bag_file,
+        declare_gps_topic,
         #TFs
         tf_base_link_to_lidar,
         tf_map_to_odom,
         #Viz
-        bridge_socket,
+        # bridge_socket,
         # rviz2 ,
         play_ros_bag,
        #Nodes
-        ins_conversion_node,
-        liodom_ouster_enu_corrector_node,
-        odometry_correction_node,
+        liodom_node,
+        odom_enu_correction_node,
+        # odometry_correction_node,
         odom2gps_node,
-        liodom_launch,
 
     ])
 

@@ -21,15 +21,15 @@ class Odom2GpsNode(Node):
         self.get_logger().info("Odom2Gps node initialized")
         
         # Declare parameters
-        self.declare_parameter('initial_gps_topic', '/Inertial_Labs/initial_gps')
+        self.declare_parameter('gps_topic', '/kitti/oxts/gps')
         self.declare_parameter('odom_topic', '/osm_align/odom')
         
         # Get parameters
-        self.initial_gps_topic: str = self.get_parameter('initial_gps_topic').get_parameter_value().string_value
+        self.gps_topic: str = self.get_parameter('gps_topic').get_parameter_value().string_value
         self.odom_topic: str = self.get_parameter('odom_topic').get_parameter_value().string_value
         
         self.get_logger().info(f"Parameters:\n"
-                                f"  initial_gps_topic: {self.initial_gps_topic}\n"
+                                f"  gps_topic: {self.gps_topic}\n"
                                 f"  odom_topic: {self.odom_topic}")
 
         # Initialize variables
@@ -39,7 +39,7 @@ class Odom2GpsNode(Node):
         # Subscribe to initial GPS for UTM projector initialization
         self.sub_gps = self.create_subscription(
             NavSatFix,
-            self.initial_gps_topic,
+            self.gps_topic,
             self.initial_gps_callback,
             10
         )

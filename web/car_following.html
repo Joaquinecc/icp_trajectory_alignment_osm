@@ -28,31 +28,8 @@
     }
     .arrowMarker svg{
       width: 40px; height: 40px;
-      transition: transform 80ms linear;   /* smooth heading updates */
       transform-origin: 50% 50%;
       display: block;
-    }
-    /* IMU graphs container */
-    .imuGraphs{
-      position: absolute; left: 12px; bottom: 12px; z-index: 1000;
-      background: rgba(255,255,255,0.95); padding: 10px; border-radius: 10px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    }
-    .graphContainer{
-      margin-bottom: 10px;
-    }
-    .graphContainer:last-child{
-      margin-bottom: 0;
-    }
-    .graphContainer canvas{
-      display: block; border: 1px solid #ccc; border-radius: 4px;
-      background: white;
-    }
-    .graphContainer .graphLabel{
-      margin-bottom: 4px; font: bold 12px system-ui, sans-serif; color: #333;
-    }
-    .graphContainer .legend{
-      margin-top: 4px; font: 10px system-ui, sans-serif; color: #666;
     }
   </style>
 </head>
@@ -66,20 +43,6 @@
 <div class="cameraOverlay">
   <canvas id="camCanvas"></canvas>
   <div class="label">/cam1/camera/color/image_raw</div>
-</div>
-
-<!-- IMU graphs -->
-<div class="imuGraphs">
-  <div class="graphContainer">
-    <div class="graphLabel">Linear Acceleration (m/s²)</div>
-    <canvas id="accelCanvas" width="400" height="120"></canvas>
-    <div class="legend">X: red, Y: green, Z: blue</div>
-  </div>
-  <div class="graphContainer">
-    <div class="graphLabel">Angular Velocity (rad/s)</div>
-    <canvas id="gyroCanvas" width="400" height="120"></canvas>
-    <div class="legend">X: red, Y: green, Z: blue</div>
-  </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -114,96 +77,19 @@
 
   const carIcon = L.marker([0,0], { icon: arrowIcon, interactive: false, zIndexOffset: 1000 }).addTo(map);
 
-  // helper to set heading (degrees clockwise from north)
-  function setHeadingDeg(deg){
-    const el = carIcon.getElement();
-    if (!el) return;
-    const svg = el.querySelector('svg');
-    if (svg) svg.style.transform = `rotate(${deg}deg)`;
-  }
-
-  // Blue arrow icon for second car
-  const blueArrowIcon = L.divIcon({
+  // Green arrow icon for second car
+  const greenArrowIcon = L.divIcon({
     className: 'arrowMarker',
     iconSize: [40,40],
     iconAnchor: [20,20],
     html: `
       <svg viewBox="0 0 100 100" aria-hidden="true">
         <!-- simple arrow/triangle with a tail -->
-        <polygon points="50,5 85,70 65,70 65,95 35,95 35,70 15,70" fill="blue" stroke="black" stroke-width="3"/>
+        <polygon points="50,5 85,70 65,70 65,95 35,95 35,70 15,70" fill="green" stroke="black" stroke-width="3"/>
       </svg>`
   });
 
-  const blueCarIcon = L.marker([0,0], { icon: blueArrowIcon, interactive: false, zIndexOffset: 999 }).addTo(map);
-
-  // helper to set heading for blue car (degrees clockwise from north)
-  function setBlueHeadingDeg(deg){
-    const el = blueCarIcon.getElement();
-    if (!el) return;
-    const svg = el.querySelector('svg');
-    if (svg) svg.style.transform = `rotate(${deg}deg)`;
-  }
-
-
-  // ===== ODOMETRY -> heading =====
-// Change 'name' if your odom topic differs
-const odomTopic = new ROSLIB.Topic({
-  ros,
-  name: '/Inertial_Labs/odom',
-  messageType: 'nav_msgs/Odometry'
-});
-
-// Quaternion -> yaw (rad), ROS REP-103 (ENU)
-function yawFromQuat(q){
-  // q = {x,y,z,w}
-  const siny_cosp = 2*(q.w*q.z + q.x*q.y);
-  const cosy_cosp = 1 - 2*(q.y*q.y + q.z*q.z);
-  return Math.atan2(siny_cosp, cosy_cosp); 
-  // [-pi, pi]
-}
-
-let lastBearingDeg = 0;
-
-odomTopic.subscribe(msg => {
-  try{
-    const q = msg.pose.pose.orientation || {};
-    const yaw = yawFromQuat(q);                   // yaw=0 when pointing +X (East) in ENU
-    const yawDeg = yaw * 180/Math.PI;
-    // Convert ENU yaw (0=East, CCW+) -> compass bearing (0=North, CW+)
-    let bearingDeg = (450-yawDeg) % 360 ;
-    if (bearingDeg < 0) bearingDeg += 360;
-    
-    // optional: tiny deadband to avoid jitter
-    // if (Math.abs(bearingDeg - lastBearingDeg) > 0.1){
-    setHeadingDeg(bearingDeg);
-    lastBearingDeg = bearingDeg;
-    console.log(bearingDeg);
-    // }
-  }catch(e){ console.error(e); }
-});
-
-// ===== BLUE CAR ODOMETRY -> heading =====
-const blueOdomTopic = new ROSLIB.Topic({
-  ros,
-  name: '/osm_align/odom',
-  messageType: 'nav_msgs/Odometry'
-});
-
-let lastBlueBearingDeg = 0;
-
-blueOdomTopic.subscribe(msg => {
-  try{
-    const q = msg.pose.pose.orientation || {};
-    const yaw = yawFromQuat(q);
-    const yawDeg = yaw * 180/Math.PI;
-    let bearingDeg = (450-yawDeg) % 360 ;
-    if (bearingDeg < 0) bearingDeg += 360;
-    
-    setBlueHeadingDeg(bearingDeg);
-    lastBlueBearingDeg = bearingDeg;
-  }catch(e){ console.error(e); }
-});
-
+  const greenCarIcon = L.marker([0,0], { icon: greenArrowIcon, interactive: false, zIndexOffset: 999 }).addTo(map);
 
   let first = true;
   let follow = true;  // start in follow mode
@@ -212,12 +98,13 @@ blueOdomTopic.subscribe(msg => {
   // Keeping topic name '/osm_align/car_geojson', type sensor_msgs/NavSatFix over rosbridge
   const gpsTopic = new ROSLIB.Topic({
     ros: ros,
-    name: '/Inertial_Labs/gps_data_std',
+    // name: '/Inertial_Labs/gps_data_std',
+    name: '/kitti/oxts/gps',
     // name: '/Inertial_Labs/gps_data_raw_std',
     messageType: 'sensor_msgs/NavSatFix'
   });
 
-  const path = L.polyline([], { weight: 3, opacity: 0.9,color:'green'}).addTo(map);
+  const path = L.polyline([], { weight: 3, opacity: 0.9, color: 'red' }).addTo(map);
   const trail = [];
   const MAX_POINTS = 5000;           // cap to prevent unbounded growth
   const MIN_DIST_M = 0.5;            // only append if moved > 0.5 m (optional smoothing)
@@ -272,32 +159,31 @@ blueOdomTopic.subscribe(msg => {
     }
   });
 
-  // ===== BLUE CAR GPS =====
-  const blueGpsTopic = new ROSLIB.Topic({
+  // ===== GREEN CAR GPS =====
+  const greenGpsTopic = new ROSLIB.Topic({
     ros: ros,
-     name: '/osm_align/gps',
-    
+    name: '/osm_align/gps',
     messageType: 'sensor_msgs/NavSatFix'
   });
 
-  const bluePath = L.polyline([], { weight: 3, opacity: 0.9, color: 'blue' }).addTo(map);
-  const blueTrail = [];
+  const greenPath = L.polyline([], { weight: 3, opacity: 0.9, color: 'green' }).addTo(map);
+  const greenTrail = [];
 
-  blueGpsTopic.subscribe(msg => {
+  greenGpsTopic.subscribe(msg => {
     try {
       const lat = msg.latitude;
       const lon = msg.longitude;
       if (!lat || !lon) return;
-      blueCarIcon.setLatLng([lat, lon]);
+      greenCarIcon.setLatLng([lat, lon]);
       
       const ll = [lat, lon];
 
       // Append to trail if moved enough or first point
-      const last = blueTrail[blueTrail.length - 1];
+      const last = greenTrail[greenTrail.length - 1];
       if (!last || distMeters(last, ll) >= MIN_DIST_M) {
-        blueTrail.push(ll);
-        if (blueTrail.length > MAX_POINTS) blueTrail.shift(); // keep it bounded
-        bluePath.setLatLngs(blueTrail);
+        greenTrail.push(ll);
+        if (greenTrail.length > MAX_POINTS) greenTrail.shift(); // keep it bounded
+        greenPath.setLatLngs(greenTrail);
       }
     } catch (e) {
       console.error(e);
@@ -404,159 +290,6 @@ blueOdomTopic.subscribe(msg => {
     }
   });
 
-  // ===== IMU GRAPHS =====
-  const accelCanvas = document.getElementById('accelCanvas');
-  const accelCtx = accelCanvas.getContext('2d');
-  const gyroCanvas = document.getElementById('gyroCanvas');
-  const gyroCtx = gyroCanvas.getContext('2d');
-
-  const graphWidth = 400;
-  const graphHeight = 120;
-  const maxPoints = 200;  // number of data points to show
-
-  // Data arrays for acceleration
-  const accelData = {
-    x: [],
-    y: [],
-    z: []
-  };
-
-  // Data arrays for gyro
-  const gyroData = {
-    x: [],
-    y: [],
-    z: []
-  };
-
-  // Draw a graph
-  function drawGraph(ctx, data, width, height, title) {
-    // Clear canvas
-    ctx.clearRect(0, 0, width, height);
-    
-    // Background
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, width, height);
-
-    // Find min/max for scaling
-    let allValues = [...data.x, ...data.y, ...data.z];
-    if (allValues.length === 0) return;
-    
-    let minVal = Math.min(...allValues);
-    let maxVal = Math.max(...allValues);
-    
-    // Add some padding to the range
-    const range = maxVal - minVal;
-    if (range < 0.1) {
-      minVal -= 0.05;
-      maxVal += 0.05;
-    } else {
-      minVal -= range * 0.1;
-      maxVal += range * 0.1;
-    }
-
-    // Draw grid lines
-    ctx.strokeStyle = '#e0e0e0';
-    ctx.lineWidth = 1;
-    for (let i = 0; i <= 4; i++) {
-      const y = (height / 4) * i;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-    }
-
-    // Draw zero line if in range
-    if (minVal <= 0 && maxVal >= 0) {
-      const zeroY = height - ((0 - minVal) / (maxVal - minVal)) * height;
-      ctx.strokeStyle = '#999';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, zeroY);
-      ctx.lineTo(width, zeroY);
-      ctx.stroke();
-    }
-
-    // Function to draw a line
-    function drawLine(values, color) {
-      if (values.length < 2) return;
-      
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      
-      const pointSpacing = width / maxPoints;
-      
-      for (let i = 0; i < values.length; i++) {
-        const x = i * pointSpacing;
-        const normalizedY = (values[i] - minVal) / (maxVal - minVal);
-        const y = height - (normalizedY * height);
-        
-        if (i === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-      }
-      ctx.stroke();
-    }
-
-    // Draw lines for x, y, z
-    drawLine(data.x, 'red');
-    drawLine(data.y, 'green');
-    drawLine(data.z, 'blue');
-
-    // Draw scale labels
-    ctx.fillStyle = '#666';
-    ctx.font = '10px system-ui';
-    ctx.textAlign = 'right';
-    ctx.fillText(maxVal.toFixed(2), width - 2, 10);
-    ctx.fillText(minVal.toFixed(2), width - 2, height - 2);
-  }
-
-  // Subscribe to IMU data
-  const imuTopic = new ROSLIB.Topic({
-    ros,
-    name: '/Inertial_Labs/imu_data_std',
-    messageType: 'sensor_msgs/Imu'
-  });
-
-  imuTopic.subscribe(msg => {
-    try {
-      // Linear acceleration
-      if (msg.linear_acceleration) {
-        accelData.x.push(msg.linear_acceleration.x);
-        accelData.y.push(msg.linear_acceleration.y);
-        accelData.z.push(msg.linear_acceleration.z);
-        
-        // Keep only last maxPoints
-        if (accelData.x.length > maxPoints) {
-          accelData.x.shift();
-          accelData.y.shift();
-          accelData.z.shift();
-        }
-        
-        drawGraph(accelCtx, accelData, graphWidth, graphHeight, 'Acceleration');
-      }
-
-      // Angular velocity
-      if (msg.angular_velocity) {
-        gyroData.x.push(msg.angular_velocity.x);
-        gyroData.y.push(msg.angular_velocity.y);
-        gyroData.z.push(msg.angular_velocity.z);
-        
-        // Keep only last maxPoints
-        if (gyroData.x.length > maxPoints) {
-          gyroData.x.shift();
-          gyroData.y.shift();
-          gyroData.z.shift();
-        }
-        
-        drawGraph(gyroCtx, gyroData, graphWidth, graphHeight, 'Gyro');
-      }
-    } catch (e) {
-      console.error('IMU data error:', e);
-    }
-  });
 
 </script>
 </body>
