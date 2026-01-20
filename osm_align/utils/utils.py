@@ -1,11 +1,9 @@
+from typing import List, Optional, Tuple
+
+import lanelet2
 import numpy as np
 from scipy.spatial.transform import Rotation
-from typing import List, Tuple, Union, Optional
-import numpy as np
-import lanelet2
-import math
 from scipy.spatial.transform import Rotation as R
-
 
 
 def tf_matrix_from(buffer, target: str, source: str, timeout_sec: float = 1.0):
@@ -15,30 +13,35 @@ def tf_matrix_from(buffer, target: str, source: str, timeout_sec: float = 1.0):
     """
     import rclpy
     from geometry_msgs.msg import TransformStamped
-    from rclpy.duration import Duration
+
     try:
         tf: TransformStamped = buffer.lookup_transform(
-            target, source, 
+            target,
+            source,
             rclpy.time.Time(seconds=0),  # latest available
-            timeout=rclpy.duration.Duration(seconds=timeout_sec)
+            timeout=rclpy.duration.Duration(seconds=timeout_sec),
         )
     except Exception as e:
         raise RuntimeError(f"Failed to get transform {source}->{target}: {e}")
 
     # translation
-    t = np.array([
-        tf.transform.translation.x,
-        tf.transform.translation.y,
-        tf.transform.translation.z
-    ])
+    t = np.array(
+        [
+            tf.transform.translation.x,
+            tf.transform.translation.y,
+            tf.transform.translation.z,
+        ]
+    )
 
     # rotation
-    q = np.array([
-        tf.transform.rotation.x,
-        tf.transform.rotation.y,
-        tf.transform.rotation.z,
-        tf.transform.rotation.w
-    ])
+    q = np.array(
+        [
+            tf.transform.rotation.x,
+            tf.transform.rotation.y,
+            tf.transform.rotation.z,
+            tf.transform.rotation.w,
+        ]
+    )
 
     # use scipy Rotation to get rotation matrix
     R_mat = R.from_quat(q).as_matrix()
@@ -48,6 +51,7 @@ def tf_matrix_from(buffer, target: str, source: str, timeout_sec: float = 1.0):
     T[:3, :3] = R_mat
     T[:3, 3] = t
     return T
+
 
 def pose_to_4x4(pose) -> np.ndarray:
     """
@@ -63,23 +67,27 @@ def pose_to_4x4(pose) -> np.ndarray:
     numpy.ndarray
         A 4x4 homogeneous matrix in row-major layout.
     """
-    quat = np.array([
-        pose.orientation.x,
-        pose.orientation.y,
-        pose.orientation.z,
-        pose.orientation.w
-    ], dtype=float)
+    quat = np.array(
+        [
+            pose.orientation.x,
+            pose.orientation.y,
+            pose.orientation.z,
+            pose.orientation.w,
+        ],
+        dtype=float,
+    )
 
     M = np.eye(4)
     M[:3, 3] = [pose.position.x, pose.position.y, pose.position.z]
     M[:3, :3] = Rotation.from_quat(quat).as_matrix()
     return M
 
+
 def solveIcp2d(
-    source: np.ndarray, 
-    target: np.ndarray, 
-    max_iterations: int = 50, 
-    tolerance: float = 1e-6
+    source: np.ndarray,
+    target: np.ndarray,
+    max_iterations: int = 50,
+    tolerance: float = 1e-6,
 ) -> Tuple[np.ndarray, np.ndarray, float]:
     """
     Solve 2D Iterative Closest Point (ICP) registration between point sets.
@@ -126,7 +134,6 @@ def solveIcp2d(
     """
     src = np.copy(source)
     tgt = np.copy(target)
-    N = src.shape[0]
 
     R_total = np.eye(2)
     T_total = np.zeros((2,))
@@ -176,13 +183,14 @@ def solveIcp2d(
     final_error = np.mean(np.linalg.norm(transformed_source - target, axis=1))
 
     return R_total, T_total, final_error
-    
+
+
 def solve_trimmed_icp_2d(
-    source_points: np.ndarray, 
-    target_points: np.ndarray, 
-    trimming_ratio: float = 0.1, 
-    max_iterations: int = 50, 
-    tolerance: float = 1e-8
+    source_points: np.ndarray,
+    target_points: np.ndarray,
+    trimming_ratio: float = 0.1,
+    max_iterations: int = 50,
+    tolerance: float = 1e-8,
 ) -> Tuple[np.ndarray, np.ndarray, float]:
     """
     Robust 2D ICP registration using trimmed least squares to handle outliers.
@@ -232,7 +240,7 @@ def solve_trimmed_icp_2d(
     2. Keeps only the best (1 - trimming_ratio) fraction
     3. Computes transformation using trimmed correspondences
     4. Applies transformation and repeats
-    
+
     This is particularly useful for outdoor robotics applications where
     sensor noise and dynamic objects can create spurious correspondences.
     """
@@ -256,7 +264,7 @@ def solve_trimmed_icp_2d(
         # best_indices = sorted_indices[:N_trimmed]
 
         best_indices = np.argpartition(distances, N_trimmed)[:N_trimmed]
-        
+
         src_trimmed = src_points[best_indices]
         tgt_trimmed = tgt_points[best_indices]
 
@@ -291,7 +299,9 @@ def solve_trimmed_icp_2d(
         src_points = (R @ src_points.T).T + t
 
         # Compute mean error using trimmed points
-        mean_error = np.mean(np.linalg.norm(src_points[best_indices] - tgt_points[best_indices], axis=1))
+        mean_error = np.mean(
+            np.linalg.norm(src_points[best_indices] - tgt_points[best_indices], axis=1)
+        )
 
         if abs(prev_error - mean_error) < tolerance:
             break
@@ -299,17 +309,24 @@ def solve_trimmed_icp_2d(
 
     # Calculate final icp_error using only the non-trimmed points (best correspondences)
     correct_source_points = (R_total @ source_points.T).T + t_total
-    icp_error = np.mean(np.linalg.norm(correct_source_points[best_indices] - target_points[best_indices], axis=1))
+    icp_error = np.mean(
+        np.linalg.norm(
+            correct_source_points[best_indices] - target_points[best_indices], axis=1
+        )
+    )
     return R_total, t_total, icp_error
 
-def kabsch_2d(source_points: np.ndarray, target_points: np.ndarray) -> Optional[np.ndarray]:
+
+def kabsch_2d(
+    source_points: np.ndarray, target_points: np.ndarray
+) -> Optional[np.ndarray]:
     """
     Compute optimal 2D rotation matrix using Kabsch algorithm.
-    
+
     Calculates the optimal rotation matrix that aligns source points to target points
     in 2D space using singular value decomposition (SVD). The algorithm finds the
     rotation that minimizes the sum of squared distances between corresponding points.
-    
+
     Parameters
     ----------
     source_points : np.ndarray
@@ -317,13 +334,13 @@ def kabsch_2d(source_points: np.ndarray, target_points: np.ndarray) -> Optional[
     target_points : np.ndarray
         Array of shape (N, 2) containing target points to align to.
         Must have the same number of points as source_points.
-        
+
     Returns
     -------
     np.ndarray or None
         2x2 rotation matrix that transforms source_points to align with target_points,
         or None if calculation fails (e.g., insufficient points).
-        
+
     Examples
     --------
     >>> source = np.array([[0, 0], [1, 0], [0, 1]])
@@ -332,7 +349,7 @@ def kabsch_2d(source_points: np.ndarray, target_points: np.ndarray) -> Optional[
     >>> print(R)
     [[ 0.  1.]
      [-1.  0.]]
-    
+
     Notes
     -----
     The Kabsch algorithm computes the optimal rotation by:
@@ -340,37 +357,40 @@ def kabsch_2d(source_points: np.ndarray, target_points: np.ndarray) -> Optional[
     2. Computing the cross-covariance matrix
     3. Performing SVD to extract the rotation
     4. Ensuring a proper rotation (determinant = 1)
-    
+
     This is commonly used for point cloud registration and trajectory alignment.
     """
     if source_points.shape[0] < 2 or target_points.shape[0] < 2:
         return None
-    
+
     # Center both point sets
     source_centroid = np.mean(source_points, axis=0)
     target_centroid = np.mean(target_points, axis=0)
-    
+
     source_centered = source_points - source_centroid
     target_centered = target_points - target_centroid
-    
+
     # Compute covariance matrix H = source_centered^T @ target_centered
     H = source_centered.T @ target_centered
-    
+
     # SVD decomposition
     U, S, Vt = np.linalg.svd(H)
-    
+
     # Rotation matrix R = Vt^T @ U^T
     R = Vt.T @ U.T
-    
+
     # Ensure proper rotation (determinant = 1)
     # If det < 0, we need to flip one column
     if np.linalg.det(R) < 0:
         Vt[1, :] *= -1
         R = Vt.T @ U.T
-    
+
     return R
-    
-def lanelet_points_and_neighbour(lanelet_map: lanelet2.core.LaneletMap , min_dist: float = 3.0) -> Tuple[np.ndarray, np.ndarray]:
+
+
+def lanelet_points_and_neighbour(
+    lanelet_map: lanelet2.core.LaneletMap, min_dist: float = 3.0
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Build the lanelet point list and its next-point associations.
     It ignores points that are too close to the previous point, defined by min_dist.
@@ -389,14 +409,18 @@ def lanelet_points_and_neighbour(lanelet_map: lanelet2.core.LaneletMap , min_dis
     lane_points_neighbour : np.ndarray
         Array of shape (N, 2) containing the next lane points.
     """
-    d2 = float(min_dist) ** 2 # Is cheeaper to compare squared distances than the actual distances
+    d2 = (
+        float(min_dist) ** 2
+    )  # Is cheeaper to compare squared distances than the actual distances
     lane_points_neighbour = []
     lane_points = []
-    lanelet_direction_points=[]
+    lanelet_direction_points = []
 
     for lanelet in lanelet_map.laneletLayer:
-        
-        centerline_points = np.array([(p.x, p.y) for p in lanelet.centerline], dtype=np.float64)
+
+        centerline_points = np.array(
+            [(p.x, p.y) for p in lanelet.centerline], dtype=np.float64
+        )
         # Distance-based thinning in one pass (compare squared distances)
         keep_idx = [0]
         last = centerline_points[0]
@@ -404,22 +428,25 @@ def lanelet_points_and_neighbour(lanelet_map: lanelet2.core.LaneletMap , min_dis
             v = centerline_points[i]
             dx = v[0] - last[0]
             dy = v[1] - last[1]
-            if dx*dx + dy*dy >= d2: #Square distance comparison
-                keep_idx.append(i)  
+            if dx * dx + dy * dy >= d2:  # Square distance comparison
+                keep_idx.append(i)
                 last = v
 
         centerline_points = centerline_points[keep_idx]
 
-
         # Create next-point associations for tangent computation
         neighbours = centerline_points.copy()
-        neighbours[:-1] = centerline_points[1:]          # forward neighbour
+        neighbours[:-1] = centerline_points[1:]  # forward neighbour
         if len(centerline_points) > 1:
-            neighbours[-1] = centerline_points[-2]           # last points to previous
-        diffs = neighbours - centerline_points #Always diff with ther consecutive point
-        diffs[-1] = centerline_points[-1]-neighbours[-1]  #Except the last point, which is diff with the previous point
+            neighbours[-1] = centerline_points[-2]  # last points to previous
+        diffs = (
+            neighbours - centerline_points
+        )  # Always diff with ther consecutive point
+        diffs[-1] = (
+            centerline_points[-1] - neighbours[-1]
+        )  # Except the last point, which is diff with the previous point
         norms = np.linalg.norm(diffs, axis=1, keepdims=True)
-        np.maximum(norms, 1e-12, out=norms)   # avoid division by zero
+        np.maximum(norms, 1e-12, out=norms)  # avoid division by zero
         tangents = diffs / norms
 
         lane_points.extend(centerline_points)
@@ -427,6 +454,8 @@ def lanelet_points_and_neighbour(lanelet_map: lanelet2.core.LaneletMap , min_dis
         lane_points_neighbour.extend(neighbours)
 
     return np.hstack((lane_points, lane_points_neighbour, lanelet_direction_points))
+
+
 def read_basalt_pose(file_path: str) -> List[np.ndarray]:
     """
     Read poses from a Basalt CSV file and return a list of 4x4 transformation matrices.
@@ -454,12 +483,7 @@ def read_basalt_pose(file_path: str) -> List[np.ndarray]:
     First pose shape: (4, 4)
     """
     # Read CSV file, skipping header line (starts with #)
-    data = np.genfromtxt(
-        file_path,
-        delimiter=',',
-        skip_header=1,
-        dtype=np.float64
-    )
+    data = np.genfromtxt(file_path, delimiter=",", skip_header=1, dtype=np.float64)
 
     poses = []
     for row in data:
@@ -481,6 +505,8 @@ def read_basalt_pose(file_path: str) -> List[np.ndarray]:
         poses.append(pose_matrix)
 
     return np.array(poses)
+
+
 def get_map_points(map_path, new_origin_gps):
     """
     It loads the map points and updates them to the new origin.
@@ -507,22 +533,21 @@ def get_map_points(map_path, new_origin_gps):
     >>> print(points_lane_map[0])
     [x1, y1, x2, y2, x3, y3]
     """
-    #Initialize odometry corrector
-    lat0,lon0=new_origin_gps
-    loaded= np.load(map_path)
-    points_lane_map = loaded['points_lane_map']
-    gps_origin_map = loaded['origin_gps']
+    # Initialize odometry corrector
+    lat0, lon0 = new_origin_gps
+    loaded = np.load(map_path)
+    points_lane_map = loaded["points_lane_map"]
+    gps_origin_map = loaded["origin_gps"]
     map_projector = lanelet2.projection.UtmProjector(
-            lanelet2.io.Origin(gps_origin_map[0], gps_origin_map[1])
-        )
+        lanelet2.io.Origin(gps_origin_map[0], gps_origin_map[1])
+    )
 
-    #Calculate offset to new origin
-    offset_xy=map_projector.forward(lanelet2.core.GPSPoint(lat0, lon0))
+    # Calculate offset to new origin
+    offset_xy = map_projector.forward(lanelet2.core.GPSPoint(lat0, lon0))
 
-    
-    offset_xy=np.array([offset_xy.x, offset_xy.y])
-    #Update lane points, to new origin.
-    points_lane_map[:,:2]=points_lane_map[:,:2]-offset_xy
-    points_lane_map[:,2:4]=points_lane_map[:,2:4]-offset_xy
+    offset_xy = np.array([offset_xy.x, offset_xy.y])
+    # Update lane points, to new origin.
+    points_lane_map[:, :2] = points_lane_map[:, :2] - offset_xy
+    points_lane_map[:, 2:4] = points_lane_map[:, 2:4] - offset_xy
 
     return points_lane_map

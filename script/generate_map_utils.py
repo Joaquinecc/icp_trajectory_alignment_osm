@@ -27,16 +27,18 @@ Requirements:
     - requests
     - crdesigner (must be installed and available in PATH)
 """
+
 import argparse
 import os
-import requests
-import xml.etree.ElementTree as ET
 import subprocess
-from tqdm import tqdm
+import sys
+import xml.etree.ElementTree as ET
 
 import lanelet2
 import numpy as np
-import sys
+import requests
+from tqdm import tqdm
+
 # Add workspace root to Python path so we can import osm_align from any directory
 script_dir = os.path.dirname(os.path.abspath(__file__))
 workspace_root = os.path.dirname(script_dir)  # Go up from script/ to workspace root
@@ -44,13 +46,21 @@ if workspace_root not in sys.path:
     sys.path.insert(0, workspace_root)
 from osm_align.utils.utils import lanelet_points_and_neighbour
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Download OSM, patch, and convert to Lanelet2")
+    parser = argparse.ArgumentParser(
+        description="Download OSM, patch, and convert to Lanelet2"
+    )
     parser.add_argument("--name", required=True, help="Name for the output files")
     parser.add_argument("--folder_output", required=True, help="Output folder")
-    parser.add_argument("--bbox", nargs=4, type=float, metavar=('S', 'W', 'N', 'E'),
-                        default=[60.176021478825, 24.925027062444,60.186692008175, 24.952570024556],
-                        help="Bounding box: south west north east")
+    parser.add_argument(
+        "--bbox",
+        nargs=4,
+        type=float,
+        metavar=("S", "W", "N", "E"),
+        default=[60.176021478825, 24.925027062444, 60.186692008175, 24.952570024556],
+        help="Bounding box: south west north east",
+    )
     args = parser.parse_args()
 
     name = args.name
@@ -90,8 +100,13 @@ def main():
         print(f"Replacing unclassified highways with residential ")
 
         tags = list(root.iter("tag"))
-        for tag in tqdm(tags, desc="Replacing 'unclassified' highways with 'residential'"):
-            if tag.attrib.get("k") == "highway" and tag.attrib.get("v") == "unclassified":
+        for tag in tqdm(
+            tags, desc="Replacing 'unclassified' highways with 'residential'"
+        ):
+            if (
+                tag.attrib.get("k") == "highway"
+                and tag.attrib.get("v") == "unclassified"
+            ):
                 tag.set("v", "residential")
 
         # Save updated XML
@@ -104,29 +119,35 @@ def main():
 
     # Run crdesigner for osmcr
     print(f"Running osmcr for {osm_path} to {crm_path}")
-    subprocess.run([
-        "crdesigner",
-        "--input-file", osm_path,
-        "--output-file", crm_path,
-        "osmcr"
-    ], check=True)
+    subprocess.run(
+        ["crdesigner", "--input-file", osm_path, "--output-file", crm_path, "osmcr"],
+        check=True,
+    )
 
     # Run crdesigner for crlanelet2
     print(f"Running crdesigner for crlanelet2")
-    subprocess.run([
-        "crdesigner",
-        "--input-file", crm_path,
-        "--output-file", lanelet2_path,
-        "crlanelet2"
-    ], check=True)
+    subprocess.run(
+        [
+            "crdesigner",
+            "--input-file",
+            crm_path,
+            "--output-file",
+            lanelet2_path,
+            "crlanelet2",
+        ],
+        check=True,
+    )
 
-    #Save the matrix map points and origin gps
+    # Save the matrix map points and origin gps
     origin_coords = [bbox[0], bbox[1]]
-    proj = lanelet2.projection.UtmProjector(lanelet2.io.Origin(origin_coords[0], origin_coords[1]))
+    proj = lanelet2.projection.UtmProjector(
+        lanelet2.io.Origin(origin_coords[0], origin_coords[1])
+    )
     lanelet_map = lanelet2.io.load(lanelet2_path, proj)
-    map_points= lanelet_points_and_neighbour(lanelet_map)
+    map_points = lanelet_points_and_neighbour(lanelet_map)
     map_points_path = os.path.join(folder_output, f"{name}_map_points.npz")
     np.savez(map_points_path, points_lane_map=map_points, origin_gps=origin_coords)
+
 
 if __name__ == "__main__":
     main()

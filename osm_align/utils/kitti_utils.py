@@ -1,9 +1,8 @@
-import os
-import numpy as np
 from typing import Dict, List, Tuple, Union
-import math
 
-angle_dict: Dict[str, float] = { #Initial Yaw orientation of the vehicle
+import numpy as np
+
+angle_dict: Dict[str, float] = {  # Initial Yaw orientation of the vehicle
     "00": -58.922619848964835,
     "01": 92.06246434076236,
     "02": -53.69354870803649,
@@ -13,7 +12,7 @@ angle_dict: Dict[str, float] = { #Initial Yaw orientation of the vehicle
     "07": 33.38621359499011,
     "08": -6.159108842836925,
     "09": 27.772955417117462,
-    "10": 15.411929213671414
+    "10": 15.411929213671414,
 }
 
 # Dictionary mapping KITTI frame IDs to origin lat/lon (angle_corr omitted)
@@ -61,15 +60,14 @@ cordinta_dict: Dict[str, Dict[str, float]] = {
 }
 
 
-
 # Dictionary mapping KITTI frame IDs to origin lat/lon (angle_corr omitted)
 cordinta_dict_360: Dict[str, Dict[str, float]] = {
     "00": {
-        "origin_lat": 49.01779795478, 
+        "origin_lat": 49.01779795478,
         "origin_lon": 8.4411710247314,
     },
     "02": {
-        "origin_lat": 48.998543220534,  
+        "origin_lat": 48.998543220534,
         "origin_lon": 8.4801168436309,
     },
     "03": {
@@ -102,29 +100,29 @@ cordinta_dict_360: Dict[str, Dict[str, float]] = {
     },
 }
 kitti_360_frame_range_cam: Dict[str, int] = {
-    "00":[0,11517],
-    "02":[4391,18997],
-    "03":[0,1030],
-    "04":[0,11586],
-    "05":[0,6742],
-    "06":[0,9698],
-    "07":[0,3395],
-    "08":[1482,4633],
-    "09":[0,14055],
-    "10":[0,3835],   
+    "00": [0, 11517],
+    "02": [4391, 18997],
+    "03": [0, 1030],
+    "04": [0, 11586],
+    "05": [0, 6742],
+    "06": [0, 9698],
+    "07": [0, 3395],
+    "08": [1482, 4633],
+    "09": [0, 14055],
+    "10": [0, 3835],
 }
 
 kitti_360_frame_range_lidar: Dict[str, int] = {
-    "00":[0,11517],
-    "02":[4391,19239],
-    "03":[0,1030],
-    "04":[0,11586],
-    "05":[0,6742],
-    "06":[0,9698],
-    "07":[0,3395],
-    "08":[1482,4633],
-    "09":[0,14055],
-    "10":[0,3835],   
+    "00": [0, 11517],
+    "02": [4391, 19239],
+    "03": [0, 1030],
+    "04": [0, 11586],
+    "05": [0, 6742],
+    "06": [0, 9698],
+    "07": [0, 3395],
+    "08": [1482, 4633],
+    "09": [0, 14055],
+    "10": [0, 3835],
 }
 # Table of sequences
 kitti_sequences = {
@@ -145,17 +143,17 @@ kitti_sequences = {
 def read_kitti_360_poses(file_path: str) -> Tuple[np.ndarray, np.ndarray]:
     """
     Read poses from a KITTI-360 pose file.
-    
+
     Reads pose data from a text file where each line contains a frame index
     followed by 16 space-separated values representing a 4x4 transformation
     matrix in row-major order.
-    
+
     Parameters
     ----------
     file_path : str
         Path to the pose file. Each line should contain an integer frame index
         followed by 16 float values representing a 4x4 matrix.
-        
+
     Returns
     -------
     poses : np.ndarray
@@ -163,7 +161,7 @@ def read_kitti_360_poses(file_path: str) -> Tuple[np.ndarray, np.ndarray]:
         where N is the number of poses in the file.
     index : np.ndarray
         Array of shape (N,) containing the frame indices corresponding to each pose.
-        
+
     Examples
     --------
     >>> poses, indices = read_kitti_360_poses("poses.txt")
@@ -173,16 +171,17 @@ def read_kitti_360_poses(file_path: str) -> Tuple[np.ndarray, np.ndarray]:
     Frame indices: [0 1 2 3 4]
     """
     with open(file_path) as f:
-        lines=f.readlines()
-    poses=[]
-    index=[]
+        lines = f.readlines()
+    poses = []
+    index = []
     for line in lines:
-        data=line.split()
-        pose=np.array(data[1:]).astype(float).reshape(4,4)
+        data = line.split()
+        pose = np.array(data[1:]).astype(float).reshape(4, 4)
         # pose = np.concatenate((pose, np.array([0.,0.,0.,1.]).reshape(1,4)))
         poses.append(pose)
         index.append(int(data[0]))
-    return np.array(poses),np.array(index)
+    return np.array(poses), np.array(index)
+
 
 def get_kitti_sequence_info(seq_id: Union[int, str]) -> Tuple[str, str, List[int]]:
     """
@@ -216,7 +215,7 @@ def get_kitti_sequence_info(seq_id: Union[int, str]) -> Tuple[str, str, List[int
     >>> date, drive, frames = get_kitti_sequence_info("00")
     >>> print(f"Date: {date}, Drive: {drive}, Frames: {frames}")
     Date: 2011_10_03, Drive: 0027, Frames: [0, 4540]
-    
+
     >>> date, drive, frames = get_kitti_sequence_info(5)
     >>> print(f"Sequence 05: {date}/{drive}, {frames[1]-frames[0]+1} frames")
     Sequence 05: 2011_09_30/0018, 2761 frames
@@ -227,6 +226,7 @@ def get_kitti_sequence_info(seq_id: Union[int, str]) -> Tuple[str, str, List[int
         raise ValueError(f"Unknown KITTI sequence id: {seq_id}")
     date, drive, frames = kitti_sequences[seq_id_str]
     return date, drive, frames
+
 
 def read_kitti_pose(path: str) -> np.ndarray:
     """
@@ -255,7 +255,7 @@ def read_kitti_pose(path: str) -> np.ndarray:
     >>> print(f"First pose shape: {poses[0].shape}")
     Loaded 1000 poses
     First pose shape: (4, 4)
-    
+
     >>> # Extract translation from first pose
     >>> translation = poses[0][:3, 3]
     >>> print(f"First pose translation: {translation}")
@@ -278,27 +278,28 @@ def read_kitti_pose(path: str) -> np.ndarray:
         poses.append(aux)
     return np.array(poses)
 
+
 def read_calib_file_kitti_360(calib_path: str) -> np.ndarray:
     """
     Read camera-to-velodyne transformation from KITTI-360 calibration file.
-    
+
     Reads a calibration file containing a 3x4 transformation matrix and
     converts it to a 4x4 homogeneous transformation matrix by appending
     the bottom row [0, 0, 0, 1].
-    
+
     Parameters
     ----------
     calib_path : str
         Path to the calibration file. The first line should contain 12
         space-separated float values representing a 3x4 transformation matrix
         in row-major order.
-        
+
     Returns
     -------
     tf_cam_to_velo : np.ndarray
         Array of shape (4, 4) containing the homogeneous transformation
         matrix from camera frame to velodyne frame.
-        
+
     Examples
     --------
     >>> tf = read_calib_file_kitti_360("calib.txt")
@@ -308,7 +309,9 @@ def read_calib_file_kitti_360(calib_path: str) -> np.ndarray:
     Translation: [0.0 0.0 0.0]
     """
     with open(calib_path) as f:
-        data=f.readlines()
-        data=np.array(data[0].split(),dtype=float).reshape(3,4)
-        tf_cam_to_velo=np.concatenate((data,np.array([0.,0.,0.,1.]).reshape(1,4)),axis=0)
+        data = f.readlines()
+        data = np.array(data[0].split(), dtype=float).reshape(3, 4)
+        tf_cam_to_velo = np.concatenate(
+            (data, np.array([0.0, 0.0, 0.0, 1.0]).reshape(1, 4)), axis=0
+        )
     return tf_cam_to_velo

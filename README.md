@@ -76,11 +76,25 @@ The system adapts the window size based on alignment success:
 
 This adaptive approach balances accuracy and robustness, handling varying road conditions while maintaining computational efficiency.
 
+## Pre-commit
+
+Before creating a PR, please run pre-commit locally before doing the commit and pushing the changes. After cloning the repo, you can install the pre-commit hooks with:
+
+```bash
+pre-commit install
+```
+
+After having added all the changes with git add, you can also manually run pre-commit as follows:
+
+```bash
+pre-commit run --all-files
+```
+
 ## License
 
 This project is licensed under the Apache License 2.0. See `LICENSE` file for details.
 
 ## Author
 
-**Joaquin Caballero**  
+**Joaquin Caballero**
 Email: joaquin@gmail.com

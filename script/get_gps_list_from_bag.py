@@ -17,8 +17,8 @@ import rosbag2_py
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 from sensor_msgs.msg import NavSatFix
-
 from tqdm import tqdm
+
 # Message type (ensure package is built/available in your environment)
 # from inertiallabs_msgs.msg import InsData  # Not strictly needed to import directly
 
@@ -96,10 +96,9 @@ def read_insdata_coords_from_bag(
         raise FileNotFoundError(f"Bag path not found: {bag_path}")
 
     reader = rosbag2_py.SequentialReader()
-    storage_options = rosbag2_py.StorageOptions(uri=bag_path, storage_id='mcap')
+    storage_options = rosbag2_py.StorageOptions(uri=bag_path, storage_id="mcap")
     converter_options = rosbag2_py.ConverterOptions(
-        input_serialization_format='cdr',
-        output_serialization_format='cdr'
+        input_serialization_format="cdr", output_serialization_format="cdr"
     )
     reader.open(storage_options, converter_options)
 
@@ -120,7 +119,6 @@ def read_insdata_coords_from_bag(
         )
 
     msg_cls = get_message(type_map[topic_name])
-
 
     coords: List[Tuple[float, float]] = []
     while reader.has_next():
@@ -151,7 +149,9 @@ def read_insdata_coords_from_bag(
     return coords
 
 
-def write_geojson_line(coords_lon_lat: List[Tuple[float, float]], out_path: str) -> None:
+def write_geojson_line(
+    coords_lon_lat: List[Tuple[float, float]], out_path: str
+) -> None:
     """
     Write a GeoJSON LineString from a list of (lon, lat).
 
@@ -173,13 +173,14 @@ def write_geojson_line(coords_lon_lat: List[Tuple[float, float]], out_path: str)
                 "type": "Feature",
                 "geometry": {
                     "type": "LineString",
-                    "coordinates": [[lon, lat, alt] for (lon, lat, alt) in coords_lon_lat],
+                    "coordinates": [
+                        [lon, lat, alt] for (lon, lat, alt) in coords_lon_lat
+                    ],
                 },
                 "properties": {
                     "name": "GPS trajectory",
                     "stroke": "#ff0000",
-                    "stroke-width": 3
-
+                    "stroke-width": 3,
                 },
             }
         ],
@@ -188,10 +189,12 @@ def write_geojson_line(coords_lon_lat: List[Tuple[float, float]], out_path: str)
         json.dump(geojson, f, indent=2)
 
 
-def print_bbox_info(coords_lon_lat: List[Tuple[float, float]], margin_m: float = 100.0) -> None:
+def print_bbox_info(
+    coords_lon_lat: List[Tuple[float, float]], margin_m: float = 100.0
+) -> None:
     """
     Compute and print diagonal (min/max lat/lon) and the same expanded by margin_m on each side.
-    
+
     Parameters
     ----------
     coords_lon_lat : List[Tuple[float, float]]
@@ -236,36 +239,49 @@ def print_bbox_info(coords_lon_lat: List[Tuple[float, float]], margin_m: float =
     print(f"  min corner (lat, lon): [{min_lat_m:.12f}, {min_lon_m:.12f}]")
     print(f"  max corner (lat, lon): [{max_lat_m:.12f}, {max_lon_m:.12f}]")
 
-    print(f"Easy copy paste: {min_lat_m:.12f}, {min_lon_m:.12f}, {max_lat_m:.12f}, {max_lon_m:.12f}")
+    print(
+        f"Easy copy paste: {min_lat_m:.12f}, {min_lon_m:.12f}, {max_lat_m:.12f}, {max_lon_m:.12f}"
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Extract InsData (lat/lon) from rosbag2 and write GeoJSON LineString."
     )
-    parser.add_argument("--bag", "-b", help="Path to rosbag2 (directory or .db3 file URI).", required=True)
     parser.add_argument(
-        "--topic", "-t",
+        "--bag",
+        "-b",
+        help="Path to rosbag2 (directory or .db3 file URI).",
+        required=True,
+    )
+    parser.add_argument(
+        "--topic",
+        "-t",
         required=False,
         default="/Inertial_Labs/ins_data",
-        help="Topic name carrying inertiallabs_msgs/msg/InsData (e.g., /Inertial_Labs/ins_data)"
+        help="Topic name carrying inertiallabs_msgs/msg/InsData (e.g., /Inertial_Labs/ins_data)",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default="track.geojson",
-        help="Output GeoJSON path (default: track.geojson)"
+        help="Output GeoJSON path (default: track.geojson)",
     )
     parser.add_argument(
-        "--margin", "-m",
+        "--margin",
+        "-m",
         type=float,
         default=100.0,
-        help="Margin in meters for expanded bounding box (default: 100)"
+        help="Margin in meters for expanded bounding box (default: 100)",
     )
     args = parser.parse_args()
 
     coords = read_insdata_coords_from_bag(args.bag, args.topic)
     if not coords:
-        print("No messages found on the specified topic. Nothing to write.", file=sys.stderr)
+        print(
+            "No messages found on the specified topic. Nothing to write.",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     # Write GeoJSON

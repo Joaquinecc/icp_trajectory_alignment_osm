@@ -62,7 +62,7 @@
 
   // const carIcon = L.circleMarker([0,0], {radius:6});
   // carIcon.addTo(map);
-  
+
   // Arrow icon pointing "north" by default; we rotate it via CSS.
   const arrowIcon = L.divIcon({
     className: 'arrowMarker',
@@ -139,7 +139,7 @@
       const lon = msg.longitude;
       if (!lat || !lon) return;
       carIcon.setLatLng([lat, lon]);
-      
+
       if (first) { map.setView([lat, lon], 20); first = false; }
       const ll = [lat, lon];
 
@@ -175,7 +175,7 @@
       const lon = msg.longitude;
       if (!lat || !lon) return;
       greenCarIcon.setLatLng([lat, lon]);
-      
+
       const ll = [lat, lon];
 
       // Append to trail if moved enough or first point

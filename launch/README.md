@@ -101,11 +101,11 @@ ros2 run osm_align kitti_odometry --ros-args \
 - Check that the map file exists for the specified `frame_id`
 - Verify that the `odom_topic` is being published
 
-### Poor alignment performance  
+### Poor alignment performance
 - Increase `min_segment_size` for more trajectory data
 - Adjust `icp_error_threshold` based on expected accuracy
 - Modify `knn_neighbors` for your map density
 
 ### Too many false alignments
-- Increase `valid_correspondence_threshold` 
+- Increase `valid_correspondence_threshold`
 - Increase `min_distance_threshold` to require more motion
