@@ -27,10 +27,41 @@ from osm_align.utils import utils
 
 class OdomEnuCorrectionNode(Node):
     """
-    Node that calculates yaw offset and publishes corrected odometry.
+    ROS2 node that calculates yaw offset between odometry and GPS trajectories.
+    
+    This node subscribes to odometry and GPS topics, collects a set of corresponding
+    poses, and uses the Kabsch algorithm to compute the optimal yaw rotation that
+    aligns the odometry trajectory with the GPS trajectory. Once calculated, it
+    applies this yaw correction to all subsequent odometry messages and publishes
+    the corrected odometry.
+    
+    Attributes
+    ----------
+    _utm_projector : Optional[lanelet2.projection.UtmProjector]
+        UTM coordinate projector initialized from first GPS message.
+    _utm_origin : Optional[tuple]
+        GPS origin coordinates (latitude, longitude) used for UTM projection.
+    poses_history : list
+        List of 4x4 pose matrices from odometry messages (up to n_points).
+    gps_positions : list
+        List of GPS positions in ENU coordinates relative to origin (up to n_points).
+    odom_origin : Optional[np.ndarray]
+        First odometry pose used as reference.
+    enu_origin : Optional[np.ndarray]
+        First GPS position in ENU coordinates.
+    yaw_offset_deg : Optional[float]
+        Calculated yaw offset in degrees, None until computed.
+    n_points : int
+        Number of points to collect before calculating yaw offset.
     """
 
     def __init__(self):
+        """
+        Initialize the OdomEnuCorrectionNode.
+        
+        Declares ROS2 parameters for input/output topics and initializes
+        subscribers, publishers, and internal state variables.
+        """
         super().__init__("odom_enu_correction_node")
         self.get_logger().info("Odom ENU correction node initialized")
         
@@ -90,7 +121,14 @@ class OdomEnuCorrectionNode(Node):
     def odom_callback(self, msg: Odometry) -> None:
         """
         Handle odometry messages.
+        
         Stores poses for yaw offset calculation and publishes corrected odometry.
+        If yaw offset has been calculated, applies the correction before publishing.
+        
+        Parameters
+        ----------
+        msg : nav_msgs.msg.Odometry
+            Incoming odometry message.
         """
         # Convert pose to 4x4 matrix (in odom frame)
         pose_4x4 = utils.pose_to_4x4(msg.pose.pose)
@@ -119,7 +157,15 @@ class OdomEnuCorrectionNode(Node):
     def gps_callback(self, msg: NavSatFix) -> None: 
         """
         Handle GPS messages to calculate ENU transform.
-        First GPS message sets the origin, subsequent messages help calculate yaw.
+        
+        First GPS message initializes the UTM projector and sets the origin.
+        Subsequent messages are converted to ENU coordinates and stored for
+        yaw offset calculation.
+        
+        Parameters
+        ----------
+        msg : sensor_msgs.msg.NavSatFix
+            Incoming GPS message.
         """
         lat = float(msg.latitude)
         lon = float(msg.longitude)
@@ -157,7 +203,13 @@ class OdomEnuCorrectionNode(Node):
     def _try_calculate_yaw_offset(self) -> None:
         """
         Calculate yaw offset from odom to ENU using Kabsch algorithm on 2D points.
-        Requires at least n_points GPS positions and odometry poses.
+        
+        Extracts 2D positions from collected odometry poses and GPS positions,
+        then uses the Kabsch algorithm to compute the optimal rotation matrix.
+        The yaw angle is extracted from this rotation matrix and stored.
+        Unsubscribes from GPS topic after successful calculation.
+        
+        Requires at least n_points GPS positions and odometry poses to be collected.
         """
         if len(self.poses_history) < self.n_points or len(self.gps_positions) < self.n_points:
             return
@@ -170,7 +222,8 @@ class OdomEnuCorrectionNode(Node):
         gps_points_2d = np.array([gps_pos[:2] for gps_pos in self.gps_positions[:self.n_points]])
         
         # Use Kabsch algorithm to find optimal rotation
-        rotation_matrix = self._kabsch_2d(gps_points_2d,odom_points_2d)
+        # Align odom points (source) to GPS points (target)
+        rotation_matrix = utils.kabsch_2d(odom_points_2d, gps_points_2d)
         
         if rotation_matrix is None:
             self.get_logger().warn("Failed to calculate rotation using Kabsch algorithm")
@@ -190,48 +243,7 @@ class OdomEnuCorrectionNode(Node):
         # Unsubscribe from GPS after calculation
         self.destroy_subscription(self.sub_gps)
     
-    def _kabsch_2d(self, source_points: np.ndarray, target_points: np.ndarray) -> Optional[np.ndarray]:
-        """
-        Compute optimal 2D rotation using Kabsch algorithm.
-        
-        Parameters
-        ----------
-        source_points : np.ndarray
-            Array of shape (N, 2) containing source points (odom).
-        target_points : np.ndarray
-            Array of shape (N, 2) containing target points (GPS).
-            
-        Returns
-        -------
-        np.ndarray or None
-            2x2 rotation matrix, or None if calculation fails.
-        """
-        if source_points.shape[0] < 2 or target_points.shape[0] < 2:
-            return None
-        
-        # Center both point sets
-        source_centroid = np.mean(source_points, axis=0)
-        target_centroid = np.mean(target_points, axis=0)
-        
-        source_centered = source_points - source_centroid
-        target_centered = target_points - target_centroid
-        
-        # Compute covariance matrix H = source_centered^T @ target_centered
-        H = source_centered.T @ target_centered
-        
-        # SVD decomposition
-        U, S, Vt = np.linalg.svd(H)
-        
-        # Rotation matrix R = Vt^T @ U^T
-        R = Vt.T @ U.T
-        
-        # Ensure proper rotation (determinant = 1)
-        # If det < 0, we need to flip one column
-        if np.linalg.det(R) < 0:
-            Vt[1, :] *= -1
-            R = Vt.T @ U.T
-        
-        return R
+
     
     def _apply_yaw_correction(self, msg: Odometry) -> Odometry:
         """

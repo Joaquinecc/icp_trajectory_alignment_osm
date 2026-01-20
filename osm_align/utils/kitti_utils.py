@@ -142,7 +142,36 @@ kitti_sequences = {
 }
 
 
-def read_kitti_360_poses(file_path):
+def read_kitti_360_poses(file_path: str) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Read poses from a KITTI-360 pose file.
+    
+    Reads pose data from a text file where each line contains a frame index
+    followed by 16 space-separated values representing a 4x4 transformation
+    matrix in row-major order.
+    
+    Parameters
+    ----------
+    file_path : str
+        Path to the pose file. Each line should contain an integer frame index
+        followed by 16 float values representing a 4x4 matrix.
+        
+    Returns
+    -------
+    poses : np.ndarray
+        Array of shape (N, 4, 4) containing homogeneous transformation matrices,
+        where N is the number of poses in the file.
+    index : np.ndarray
+        Array of shape (N,) containing the frame indices corresponding to each pose.
+        
+    Examples
+    --------
+    >>> poses, indices = read_kitti_360_poses("poses.txt")
+    >>> print(f"Loaded {len(poses)} poses")
+    >>> print(f"Frame indices: {indices[:5]}")
+    Loaded 1000 poses
+    Frame indices: [0 1 2 3 4]
+    """
     with open(file_path) as f:
         lines=f.readlines()
     poses=[]
@@ -250,6 +279,34 @@ def read_kitti_pose(path: str) -> np.ndarray:
     return np.array(poses)
 
 def read_calib_file_kitti_360(calib_path: str) -> np.ndarray:
+    """
+    Read camera-to-velodyne transformation from KITTI-360 calibration file.
+    
+    Reads a calibration file containing a 3x4 transformation matrix and
+    converts it to a 4x4 homogeneous transformation matrix by appending
+    the bottom row [0, 0, 0, 1].
+    
+    Parameters
+    ----------
+    calib_path : str
+        Path to the calibration file. The first line should contain 12
+        space-separated float values representing a 3x4 transformation matrix
+        in row-major order.
+        
+    Returns
+    -------
+    tf_cam_to_velo : np.ndarray
+        Array of shape (4, 4) containing the homogeneous transformation
+        matrix from camera frame to velodyne frame.
+        
+    Examples
+    --------
+    >>> tf = read_calib_file_kitti_360("calib.txt")
+    >>> print(f"Transformation shape: {tf.shape}")
+    >>> print(f"Translation: {tf[:3, 3]}")
+    Transformation shape: (4, 4)
+    Translation: [0.0 0.0 0.0]
+    """
     with open(calib_path) as f:
         data=f.readlines()
         data=np.array(data[0].split(),dtype=float).reshape(3,4)

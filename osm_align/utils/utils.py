@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Optional
 import numpy as np
 import lanelet2
 import math
@@ -74,35 +74,6 @@ def pose_to_4x4(pose) -> np.ndarray:
     M[:3, 3] = [pose.position.x, pose.position.y, pose.position.z]
     M[:3, :3] = Rotation.from_quat(quat).as_matrix()
     return M
-def pose_to_homogenous_matrix(R: np.ndarray, T: np.ndarray) -> np.ndarray:
-    """
-    Convert a 2D rotation matrix and translation vector to a 4x4 homogeneous transformation matrix.
-    Parameters
-    ----------
-    R : np.ndarray
-        Rotation matrix of shape (2, 2).
-    T : np.ndarray
-        Translation vector of shape (2,).
-    Returns
-    -------
-    T_hom : np.ndarray
-        Homogeneous transformation matrix of shape (4, 4).
-    Examples
-    --------
-    >>> R = np.array([[0, 1], [-1, 0]])
-    >>> T = np.array([1, 2])
-    >>> T_hom = pose_to_homogenous_matrix(R, T)
-    >>> print(T_hom)
-    [[0 1 1 2]
-     [-1 0 0 0]
-     [0 0 1 0]
-     [0 0 0 1]]
-    """
-    T_hom = np.eye(4)
-    T_hom[:3, :3] = R
-    T_hom[:3, 3] = T
-    return T_hom
-
 
 def solveIcp2d(
     source: np.ndarray, 
@@ -331,6 +302,74 @@ def solve_trimmed_icp_2d(
     icp_error = np.mean(np.linalg.norm(correct_source_points[best_indices] - target_points[best_indices], axis=1))
     return R_total, t_total, icp_error
 
+def kabsch_2d(source_points: np.ndarray, target_points: np.ndarray) -> Optional[np.ndarray]:
+    """
+    Compute optimal 2D rotation matrix using Kabsch algorithm.
+    
+    Calculates the optimal rotation matrix that aligns source points to target points
+    in 2D space using singular value decomposition (SVD). The algorithm finds the
+    rotation that minimizes the sum of squared distances between corresponding points.
+    
+    Parameters
+    ----------
+    source_points : np.ndarray
+        Array of shape (N, 2) containing source points to be rotated.
+    target_points : np.ndarray
+        Array of shape (N, 2) containing target points to align to.
+        Must have the same number of points as source_points.
+        
+    Returns
+    -------
+    np.ndarray or None
+        2x2 rotation matrix that transforms source_points to align with target_points,
+        or None if calculation fails (e.g., insufficient points).
+        
+    Examples
+    --------
+    >>> source = np.array([[0, 0], [1, 0], [0, 1]])
+    >>> target = np.array([[0, 0], [0, 1], [-1, 0]])  # Rotated 90 degrees
+    >>> R = kabsch_2d(source, target)
+    >>> print(R)
+    [[ 0.  1.]
+     [-1.  0.]]
+    
+    Notes
+    -----
+    The Kabsch algorithm computes the optimal rotation by:
+    1. Centering both point sets
+    2. Computing the cross-covariance matrix
+    3. Performing SVD to extract the rotation
+    4. Ensuring a proper rotation (determinant = 1)
+    
+    This is commonly used for point cloud registration and trajectory alignment.
+    """
+    if source_points.shape[0] < 2 or target_points.shape[0] < 2:
+        return None
+    
+    # Center both point sets
+    source_centroid = np.mean(source_points, axis=0)
+    target_centroid = np.mean(target_points, axis=0)
+    
+    source_centered = source_points - source_centroid
+    target_centered = target_points - target_centroid
+    
+    # Compute covariance matrix H = source_centered^T @ target_centered
+    H = source_centered.T @ target_centered
+    
+    # SVD decomposition
+    U, S, Vt = np.linalg.svd(H)
+    
+    # Rotation matrix R = Vt^T @ U^T
+    R = Vt.T @ U.T
+    
+    # Ensure proper rotation (determinant = 1)
+    # If det < 0, we need to flip one column
+    if np.linalg.det(R) < 0:
+        Vt[1, :] *= -1
+        R = Vt.T @ U.T
+    
+    return R
+    
 def lanelet_points_and_neighbour(lanelet_map: lanelet2.core.LaneletMap , min_dist: float = 3.0) -> Tuple[np.ndarray, np.ndarray]:
     """
     Build the lanelet point list and its next-point associations.
@@ -388,49 +427,6 @@ def lanelet_points_and_neighbour(lanelet_map: lanelet2.core.LaneletMap , min_dis
         lane_points_neighbour.extend(neighbours)
 
     return np.hstack((lane_points, lane_points_neighbour, lanelet_direction_points))
-def rotation_angle_2d(ref_point: np.ndarray, target_point: np.ndarray) -> np.ndarray:
-    """
-    Compute the 2D rotation angle (degrees) between two sets of vectors (elementwise).
-    
-    Parameters
-    ----------
-    ref_point : np.ndarray of shape (N, 2)
-        Array of reference vectors in the first frame.
-    target_point : np.ndarray of shape (N, 2)
-        Array of corresponding vectors in the rotated frame.
-    
-    Returns
-    -------
-    np.ndarray of shape (N,)
-        Rotation angles in degrees (positive = counterclockwise) for each vector pair.
-    """
-    # Ensure numpy array and float dtype
-    ref_point = np.asarray(ref_point, dtype=np.float64)
-    target_point = np.asarray(target_point, dtype=np.float64)
-    # Dot product and cross product (per row)
-    dot = np.sum(ref_point * target_point, axis=1)
-    # 2D cross product: x1*y2 - y1*x2
-    cross = ref_point[:, 0] * target_point[:, 1] - ref_point[:, 1] * target_point[:, 0]
-
-    # Norms
-    norm_ref = np.linalg.norm(ref_point, axis=1)
-    norm_target = np.linalg.norm(target_point, axis=1)
-
-    # Cosine and sine of the angles
-    denom = norm_ref * norm_target
-    # Avoid division by zero
-    with np.errstate(divide='ignore', invalid='ignore'):
-        cos_theta = np.divide(dot, denom, where=denom!=0)
-        sin_theta = np.divide(cross, denom, where=denom!=0)
-
-    # Clamp cos_theta for numerical stability
-    cos_theta = np.clip(cos_theta, -1.0, 1.0)
-
-    angle_rad = np.arctan2(sin_theta, cos_theta)
-    angle_deg = np.degrees(angle_rad)
-    # Set deg=0 where denominator is zero
-    angle_deg = np.where(denom != 0, angle_deg, 0.0)
-    return angle_deg
 def read_basalt_pose(file_path: str) -> List[np.ndarray]:
     """
     Read poses from a Basalt CSV file and return a list of 4x4 transformation matrices.

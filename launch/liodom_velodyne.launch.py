@@ -214,13 +214,13 @@ def generate_launch_description():
         tf_base_link_to_lidar,
         tf_map_to_odom,
         #Viz
-        # bridge_socket,
-        # rviz2 ,
+        bridge_socket,
+        rviz2 ,
         play_ros_bag,
        #Nodes
         liodom_node,
         odom_enu_correction_node,
-        # odometry_correction_node,
+        odometry_correction_node,
         odom2gps_node,
 
     ])

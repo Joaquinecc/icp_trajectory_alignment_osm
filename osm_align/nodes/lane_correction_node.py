@@ -1,8 +1,12 @@
+# Copyright 2026 Distance Technologies Oy. For internal use only.
+#
 """
 Node for odometry correction against lanelet centerlines.
-It subscribes to odometry and gps data and publishes the corrected odometry and gps data.
-It also publishes lanelet markers for RVIZ visualization.
-It also publishes the corrected gps position in geojson format for web visualization.
+
+This node subscribes to odometry and GPS data, corrects the odometry trajectory
+by aligning it with lanelet centerlines from an OSM map, and publishes the
+corrected odometry. The correction uses iterative closest point (ICP) algorithms
+to align trajectory segments with the map data.
 """
 
 #ROS2
@@ -31,8 +35,36 @@ ODOM_ALIGNED_TOPIC = 'osm_align/odom' #Topic for aligned odometry
 GPS_CORRECTED_TOPIC = 'osm_align/gps' #Topic for odom corrected in gps string
 
 class LaneCorrectionNode(Node):
-
+    """
+    ROS2 node for correcting odometry using lanelet centerlines.
+    
+    This node corrects odometry trajectories by aligning them with lanelet
+    centerlines from an OSM map. It uses ICP-based algorithms to find the
+    optimal alignment between trajectory segments and map data.
+    
+    Attributes
+    ----------
+    _utm_projector : Optional[lanelet2.projection.UtmProjector]
+        UTM coordinate projector initialized from first GPS message.
+    _utm_origin : Optional[tuple]
+        GPS origin coordinates (latitude, longitude) used for UTM projection.
+    frame_count : int
+        Counter for processed frames.
+    poses_history : list
+        List of 4x4 pose matrices from corrected odometry.
+    trajectory_correction : Optional[OdomCorrector]
+        OdomCorrector instance for applying trajectory corrections.
+    tf_to_map : np.ndarray
+        4x4 transformation matrix from odom frame to map/enu frame.
+    """
+    
     def __init__(self):
+        """
+        Initialize the LaneCorrectionNode.
+        
+        Declares ROS2 parameters, initializes subscribers and publishers,
+        and sets up the TF listener for coordinate frame transformations.
+        """
         super().__init__("lane_correction_node")
         self.get_logger().info("Lane correction node initialized")
         self.declare_parameter('map_points_filepath', '')
@@ -97,7 +129,19 @@ class LaneCorrectionNode(Node):
         self.get_logger().info(f"Yaw angle (Z axis, degrees) from odom to enu: {yaw:.2f}")
 
 
-    def odom_callback(self, msg: Odometry) -> None:  
+    def odom_callback(self, msg: Odometry) -> None:
+        """
+        Handle odometry messages and apply trajectory correction.
+        
+        Transforms the incoming odometry pose to the map frame, applies
+        trajectory correction if available, and publishes the corrected
+        odometry. Also records the corrected pose to history.
+        
+        Parameters
+        ----------
+        msg : nav_msgs.msg.Odometry
+            Incoming odometry message to correct.
+        """
         if self._utm_projector is None:
             self.get_logger().warn("UTM projector not initialized yet, waiting for initial GPS...")
 
@@ -129,7 +173,23 @@ class LaneCorrectionNode(Node):
 
    
     def initial_gps_callback(self, msg: NavSatFix) -> None:
-
+        """
+        Initialize UTM projector and load lanelet map from first GPS message.
+        
+        Uses the first GPS message to initialize the UTM projector and load
+        the lanelet map points. The map points are transformed to the new
+        GPS origin, and the OdomCorrector is initialized with the map data.
+        
+        Parameters
+        ----------
+        msg : sensor_msgs.msg.NavSatFix
+            Initial GPS message containing latitude, longitude, and altitude.
+            
+        Raises
+        ------
+        ValueError
+            If no map points filepath is provided in parameters.
+        """
         lat0 = float(msg.latitude)
         lon0 = float(msg.longitude)
         alt0 = float(msg.altitude)
@@ -167,7 +227,19 @@ class LaneCorrectionNode(Node):
 
 
     def publish_odom(self, pose, base_frame_id: str) -> None:
-
+        """
+        Publish corrected odometry message.
+        
+        Creates and publishes an Odometry message with the corrected pose.
+        The message is published in the "map" frame.
+        
+        Parameters
+        ----------
+        pose : geometry_msgs.msg.Pose
+            Corrected pose to publish.
+        base_frame_id : str
+            Child frame ID for the odometry message (typically the base frame).
+        """
         odom_msg = Odometry()
         odom_msg.header.frame_id = "map" 
         odom_msg.child_frame_id = base_frame_id
@@ -180,6 +252,10 @@ class LaneCorrectionNode(Node):
     def _initialize_odom_correction(self) -> None:
         """
         Initialize the OdomCorrector object.
+        
+        Creates an OdomCorrector instance with the loaded lanelet map points
+        and correction parameters. Only valid parameter keys are passed to
+        the OdomCorrector constructor.
         """
         # Collect only known supported keys from parameters_correction dynamically
         valid_keys = [
@@ -197,7 +273,18 @@ class LaneCorrectionNode(Node):
         self.get_logger().info(f"OdomCorrector initialized")
 
     def save_results(self) -> None:
-        """Save pose history and alignment runtimes if path is provided."""
+        """
+        Save pose history to file if save path is provided.
+        
+        Writes all collected corrected poses to a text file in the specified
+        save directory. Each pose is written as a flattened 4x4 matrix with
+        16 space-separated floating-point values per line.
+        
+        Notes
+        -----
+        The save path is specified via the 'save_resuts_path' parameter.
+        If the path is empty or not set, this method returns without saving.
+        """
         if not self.save_resuts_path or not self.save_resuts_path.strip():
             return
         try:
