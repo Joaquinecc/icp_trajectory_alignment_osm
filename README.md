@@ -1,168 +1,86 @@
-# OSM Align - Trajectory Correction using OpenStreetMap Data
+# OSM Align
 
-A ROS2 package for real-time odometry trajectory correction using OpenStreetMap (OSM) lanelet data. This system subscribes to odometry messages, maintains a sliding window of poses, and periodically aligns the trajectory to a high-definition map using robust ICP (Iterative Closest Point) algorithms.
+ROS2 package for odometry trajectory correction using OpenStreetMap lanelet data. It was tested with LiODOM and Basalt odometry method.
 
-## Overview
+## Build Map
 
-OSM Align implements trajectory-to-map alignment for autonomous vehicle navigation, correcting drift in laser odometry systems using OpenStreetMap road network data. The system uses Lanelet2 library to process OSM data and publishes corrected odometry on `/osm_align/odom`.
+First, generate the map from OpenStreetMap data:
 
-## Algorithm Overview
-
-1. **Trajectory Buffering**: Maintains a sliding window of recent odometry poses
-2. **Map Loading**: Loads OSM lanelet data and converts to 2D point cloud representation
-3. **Correspondence Finding**: Uses KD-tree for efficient nearest neighbor queries
-4. **Normal Shooting**: Projects trajectory normals to find map intersections
-5. **Robust Alignment**: Employs trimmed/RANSAC ICP for drift-resistant pose correction
-6. **Publish Corrected Odometry**: Outputs corrected poses on `/osm_align/odom`
-
-
-## Requirements
-
-### System Requirements
-- **ROS2**: Tested with ROS2 Humble
-- **Python**: 3.12 (compatible with other Python 3.x versions)
-- **Operating System**: Linux (tested on Ubuntu)
-
-### Dependencies
-
-#### ROS2 Packages
-- `rclpy` - ROS2 Python client library
-- `nav_msgs` - Navigation message types
-- `tf2_ros` - Transform library
-- `tf_transformations` - Transform utilities
-
-#### Lanelet2 Dependencies
-- `lanelet2_core` - Core lanelet functionality
-- `lanelet2_io` - I/O operations for lanelet maps
-- `lanelet2_projection` - Map projection utilities
-
-#### Python Libraries
-- `numpy` - Numerical computing
-- `scipy` - Scientific computing (spatial algorithms, transforms)
-- `transforms3d` - 3D transformation utilities
-
-## Installation
-
-### 1. Clone the Repository
 ```bash
-cd ~/ros2_ws/src
-git clone <repository-url> osm_align
+python script/generate_map_utils.py --name <map_name> \
+  --folder_output <output_folder> \
+  --bbox <south> <west> <north> <east>
 ```
 
-### 2. Install Dependencies
+Example:
 ```bash
-# Install ROS2 dependencies
-sudo apt install ros-<humble>-lanelet2-core ros-humble-lanelet2-io ros-humble-lanelet2-projection
-
-# Install Python dependencies
-pip install numpy scipy transforms3d
+python script/generate_map_utils.py --name karlsruhe_map_Data \
+  --folder_output ~/user/folder/ \
+  --bbox 60.145248751885305 24.820470292735703 60.26639152490457 25.057807708356957
 ```
 
-### 3. Build the Package
+## Run
+
+Launch the correction node with kitti dataset:
+
 ```bash
-cd ~/ros2_ws
+ros2 launch osm_align liodom_velodyne.launch.py \
+  map_points_filepath:=/path/to/map_points.npz \
+  bag_file:=/path/to/bag_file/ > log.out
+```
+
+
+## Build Package
+
+```bash
 colcon build --packages-select osm_align --symlink-install
 source install/setup.bash
 ```
 
-## Usage
+## Algorithm
 
-### Basic Launch
-```bash
-ros2 launch osm_align osm_align.launch.py
-```
+The system corrects odometry drift by aligning vehicle trajectories to OpenStreetMap lane centerlines using a sliding window approach with robust point matching and trimmed ICP.
 
-### Launch with Custom Parameters
-```bash
-ros2 launch osm_align osm_align.launch.py \
-    frame_id:=02 \
-    min_segment_size:=150 \
-    icp_error_threshold:=1.5 \
-    odom_topic:=/your_odom_topic
-```
+### Trajectory Accumulation
 
-### Launch Arguments
+The algorithm maintains a sliding window of recent poses, starting with a minimum segment size and dynamically growing up to a maximum size. Each new pose is transformed using an accumulated correction transform and added to the window. When the window exceeds the maximum size, the oldest poses are removed to maintain computational efficiency.
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `frame_id` | `"00"` | KITTI sequence identifier for coordinate system |
-| `map_lanelet_path` | `""` | Path to OSM lanelet file (auto-constructed if empty) |
-| `min_segment_size` | `150` | Number of poses in sliding window buffer |
-| `knn_neighbors` | `100` | Number of nearest neighbors for spatial queries |
-| `valid_correspondence_threshold` | `0.9` | Minimum ratio of valid correspondences |
-| `icp_error_threshold` | `1.5` | Maximum ICP error for successful alignment |
-| `trimming_ratio` | `0.4` | Trimming ratio for robust ICP |
-| `min_distance_threshold` | `10.0` | Minimum trajectory distance before alignment |
-| `odom_topic` | `"/liodom/odom"` | Input odometry topic name |
-| `save_resuts_path` | `'/home/.../results/osm_aligned/...'` | Directory to save results (optional) |
+### Lane Point Matching
 
-## Topics
+For each trajectory point, the algorithm finds the corresponding lane centerline point through a two-stage process:
 
-### Subscribed Topics
-- `odom_topic` (`nav_msgs/Odometry`) - Input odometry messages (default `/liodom/odom`)
+1. **Spatial Query**: A KD-tree efficiently retrieves k nearest lane points as candidates.
 
-### Published Topics
-- `/osm_align/odom` (`nav_msgs/Odometry`) - Corrected odometry
+2. **Directional Filtering**: The trajectory tangent is computed from neighboring points. Candidate lanes are filtered by requiring the dot product between the trajectory tangent and lane direction to be at least 0.95, ensuring the lane aligns with the vehicle's heading.
 
-## Testing
+3. **Normal Projection**: For directionally-aligned candidates, the algorithm projects the trajectory point onto the lane segment using normal shooting. The intersection of the trajectory normal (perpendicular to the tangent) with the lane segment is computed. If the intersection parameter falls within [0, 1], the projection point is selected as the match.
 
-The package has been tested with:
+4. **Consistency Caching**: Matches that have been consistently found (≥4 consecutive times) are cached and reused to maintain temporal consistency and reduce computation.
 
-### Datasets
-- **KITTI Odometry Dataset** - Multiple sequences (00, 01, 02, etc.)
+### Alignment Process
 
-### Odometry Systems
-- **LIODOM** - Lidar Inertial Odometry via Smoothing and Mapping (for testing)
-- **Any odometry source** that publishes `nav_msgs/Odometry`
+When the window reaches the dynamic segment size, alignment is triggered:
 
-## Configuration for KITTI Dataset
+1. **Validation**: The accumulated trajectory distance must exceed a minimum threshold, and a sufficient fraction of poses must have valid lane matches.
 
-The package includes pre-configured coordinate systems for KITTI sequences. Each sequence has specific:
-- GPS origin coordinates for map projection
-- Rotation angles for coordinate frame alignment
-- Optimized algorithm parameters
+2. **Trimmed ICP**: A trimmed ICP algorithm is applied to the valid correspondences. The algorithm removes a fraction of the largest residuals (outliers) to handle mismatches and noise.
 
-## Examples
+3. **Transform Application**: If the final ICP error is below the threshold, the computed 2D rigid transform (rotation and translation) is applied to all poses in the window. The accumulated correction transform is updated by composing the new transform with the existing one.
 
-### Running with KITTI Sequence 00
-```bash
-ros2 launch osm_align osm_align.launch.py frame_id:=00
-```
+### Adaptive Window Management
 
-### Custom OSM Map
-```bash
-ros2 launch osm_align osm_align.launch.py \
-    map_lanelet_path:=/path/to/your/map.osm \
-    frame_id:=custom
-```
+The system adapts the window size based on alignment success:
+- **Success**: The dynamic segment size increases (up to maximum), allowing the window to grow for better robustness.
+- **Failure**: The oldest pose is removed, shrinking the window to prevent accumulation of poor matches.
+- **Reset**: After consecutive failures, the system resets to the minimum segment size, clearing accumulated errors and allowing recovery.
 
-## Troubleshooting
-
-### Common Issues
-
-1. **Map Loading Errors**: Ensure OSM file contains valid lanelet data
-2. **Odometry Input**: Verify the configured `odom_topic` is being published
-3. **Coordinate Frames**: Check that map and odometry coordinate systems are properly aligned
-
-### Debug Information
-
-Enable debug logging to monitor alignment performance:
-```bash
-ros2 launch osm_align osm_align.launch.py --ros-args --log-level debug
-```
-
+This adaptive approach balances accuracy and robustness, handling varying road conditions while maintaining computational efficiency.
 
 ## License
 
 This project is licensed under the Apache License 2.0. See `LICENSE` file for details.
 
-## Maintainer
+## Author
 
 **Joaquin Caballero**  
 Email: joaquin@gmail.com
-
-## Acknowledgments
-
-- Built using [Lanelet2](https://github.com/fzi-forschungszentrum-informatik/Lanelet2) library
-- Tested with [LIODOM](https://github.com/emiliofidalgo/liodom) odometry system
-- KITTI dataset for validation and testing
