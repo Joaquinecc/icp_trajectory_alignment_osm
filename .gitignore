@@ -5,3 +5,6 @@ __pycache__/*
 *.pyc
 *.sh
 temp
+*.log
+*.out
+*.geojson

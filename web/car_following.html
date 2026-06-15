@@ -1,0 +1,296 @@
+<!doctype html>
+
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Car on OSM</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    html,body,#map{height:100%;margin:0}
+    .controls{
+      position: absolute; right: 12px; bottom: 12px; z-index: 1000;
+      background: rgba(255,255,255,0.9); padding: 8px 10px; border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15); font-family: system-ui, sans-serif;
+    }
+    /* Camera overlay (top-left) */
+    .cameraOverlay{
+      position: absolute; left: 12px; top: 12px; z-index: 1000;
+      background: rgba(0,0,0,0.45); padding: 6px; border-radius: 10px;
+      backdrop-filter: blur(2px);
+    }
+    /* switched from <img> to <canvas> */
+    .cameraOverlay canvas{
+      display: block; width: 640px; height: 360px; border-radius: 8px;
+      image-rendering: crisp-edges; image-rendering: pixelated;
+    }
+    .cameraOverlay .label{
+      margin-top: 4px; color: white; font: 12px/1.2 system-ui, sans-serif; opacity: 0.9; text-align:center;
+    }
+    .arrowMarker svg{
+      width: 40px; height: 40px;
+      transform-origin: 50% 50%;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div class="controls">
+  <button id="toggleFollow">Stop follow</button>
+</div>
+
+<!-- Camera overlay -->
+<div class="cameraOverlay">
+  <canvas id="camCanvas"></canvas>
+  <div class="label">/cam1/camera/color/image_raw</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/roslib/build/roslib.min.js"></script>
+<script>
+  // Copyright 2025 Distance Technologies Oy. For internal use only.
+  //
+  // Connect to rosbridge on localhost:9090 (change host if needed)
+  const ros = new ROSLIB.Ros({url: 'ws://localhost:9090'});
+
+  // Leaflet map
+  const map = L.map('map').setView([0,0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:19,
+    attribution:'&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  // const carIcon = L.circleMarker([0,0], {radius:6});
+  // carIcon.addTo(map);
+
+  // Arrow icon pointing "north" by default; we rotate it via CSS.
+  const arrowIcon = L.divIcon({
+    className: 'arrowMarker',
+    iconSize: [40,40],
+    iconAnchor: [20,20],
+    html: `
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <!-- simple arrow/triangle with a tail -->
+        <polygon points="50,5 85,70 65,70 65,95 35,95 35,70 15,70" fill="red" stroke="black" stroke-width="3"/>
+      </svg>`
+  });
+
+  const carIcon = L.marker([0,0], { icon: arrowIcon, interactive: false, zIndexOffset: 1000 }).addTo(map);
+
+  // Green arrow icon for second car
+  const greenArrowIcon = L.divIcon({
+    className: 'arrowMarker',
+    iconSize: [40,40],
+    iconAnchor: [20,20],
+    html: `
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <!-- simple arrow/triangle with a tail -->
+        <polygon points="50,5 85,70 65,70 65,95 35,95 35,70 15,70" fill="green" stroke="black" stroke-width="3"/>
+      </svg>`
+  });
+
+  const greenCarIcon = L.marker([0,0], { icon: greenArrowIcon, interactive: false, zIndexOffset: 999 }).addTo(map);
+
+  let first = true;
+  let follow = true;  // start in follow mode
+
+  // Subscribe directly to NavSatFix topic (interpreted as object structure, not GeoJSON)
+  // Keeping topic name '/osm_align/car_geojson', type sensor_msgs/NavSatFix over rosbridge
+  const gpsTopic = new ROSLIB.Topic({
+    ros: ros,
+    // name: '/Inertial_Labs/gps_data_std',
+    name: '/kitti/oxts/gps',
+    // name: '/Inertial_Labs/gps_data_raw_std',
+    messageType: 'sensor_msgs/NavSatFix'
+  });
+
+  const path = L.polyline([], { weight: 3, opacity: 0.9, color: 'red' }).addTo(map);
+  const trail = [];
+  const MAX_POINTS = 5000;           // cap to prevent unbounded growth
+  const MIN_DIST_M = 0.5;            // only append if moved > 0.5 m (optional smoothing)
+
+  // Controls
+  const btnFollow = document.getElementById('toggleFollow');
+
+  btnFollow.onclick = () => {
+    follow = !follow;
+    btnFollow.textContent = follow ? 'Stop follow' : 'Start follow';
+  };
+
+  // Stop following if user drags; double-click to re-enable follow
+  map.on('dragstart', () => { follow = false; btnFollow.textContent = 'Start follow'; });
+  map.on('dblclick', () => { follow = true; btnFollow.textContent = 'Stop follow'; });
+
+  // Simple Haversine distance in meters
+  function distMeters(a, b) {
+    const toRad = d => d * Math.PI / 180;
+    const R = 6371000;
+    const dLat = toRad(b[0] - a[0]);
+    const dLon = toRad(b[1] - a[1]);
+    const lat1 = toRad(a[0]), lat2 = toRad(b[0]);
+    const s = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  }
+
+  // GPS: message is ROS NavSatFix
+  gpsTopic.subscribe(msg => {
+    try {
+      const lat = msg.latitude;
+      const lon = msg.longitude;
+      if (!lat || !lon) return;
+      carIcon.setLatLng([lat, lon]);
+
+      if (first) { map.setView([lat, lon], 20); first = false; }
+      const ll = [lat, lon];
+
+      // Append to trail if moved enough or first point
+      const last = trail[trail.length - 1];
+      if (!last || distMeters(last, ll) >= MIN_DIST_M) {
+        trail.push(ll);
+        if (trail.length > MAX_POINTS) trail.shift(); // keep it bounded
+        path.setLatLngs(trail);
+      }
+
+      if (follow) {
+        map.setView([lat, lon], map.getZoom());
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  });
+
+  // ===== GREEN CAR GPS =====
+  const greenGpsTopic = new ROSLIB.Topic({
+    ros: ros,
+    name: '/osm_align/gps',
+    messageType: 'sensor_msgs/NavSatFix'
+  });
+
+  const greenPath = L.polyline([], { weight: 3, opacity: 0.9, color: 'green' }).addTo(map);
+  const greenTrail = [];
+
+  greenGpsTopic.subscribe(msg => {
+    try {
+      const lat = msg.latitude;
+      const lon = msg.longitude;
+      if (!lat || !lon) return;
+      greenCarIcon.setLatLng([lat, lon]);
+
+      const ll = [lat, lon];
+
+      // Append to trail if moved enough or first point
+      const last = greenTrail[greenTrail.length - 1];
+      if (!last || distMeters(last, ll) >= MIN_DIST_M) {
+        greenTrail.push(ll);
+        if (greenTrail.length > MAX_POINTS) greenTrail.shift(); // keep it bounded
+        greenPath.setLatLngs(greenTrail);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  });
+
+  // ===== RAW IMAGE -> Canvas (sensor_msgs/Image, rgb8) =====
+  const camCanvas = document.getElementById('camCanvas');
+  const ctx = camCanvas.getContext('2d', { willReadFrequently: false });
+
+  // Helper: Uint8Array from rosbridge field (array or base64 string)
+  function bytesFrom(dataField) {
+    if (dataField == null) return new Uint8Array();
+    if (Array.isArray(dataField)) return new Uint8Array(dataField);
+    if (typeof dataField === 'string') {
+      const bstr = atob(dataField);
+      const arr = new Uint8Array(bstr.length);
+      for (let i = 0; i < bstr.length; i++) arr[i] = bstr.charCodeAt(i);
+      return arr;
+    }
+    if (dataField.buffer && dataField.byteLength !== undefined) return new Uint8Array(dataField);
+    return new Uint8Array();
+  }
+
+  function renderImage(msg) {
+    const w = msg.width, h = msg.height;
+    if (!w || !h) return;
+
+    // Ensure canvas internal resolution matches the incoming frame
+    if (camCanvas.width !== w || camCanvas.height !== h) {
+      camCanvas.width = w; camCanvas.height = h;
+    }
+
+    const encoding = (msg.encoding || 'rgb8').toLowerCase();
+    const step = msg.step || (encoding.includes('rgb') ? w * 3 : w);
+    const src = bytesFrom(msg.data);
+
+    // Output RGBA buffer
+    const out = new Uint8ClampedArray(w * h * 4);
+
+    if (encoding === 'rgb8') {
+      for (let row = 0; row < h; row++) {
+        const srcRowStart = row * step;
+        const dstRowStart = row * w * 4;
+        for (let col = 0; col < w; col++) {
+          const si = srcRowStart + col * 3;
+          const di = dstRowStart + col * 4;
+          out[di]   = src[si];     // R
+          out[di+1] = src[si+1];   // G
+          out[di+2] = src[si+2];   // B
+          out[di+3] = 255;         // A
+        }
+      }
+    } else if (encoding === 'bgr8') {
+      for (let row = 0; row < h; row++) {
+        const srcRowStart = row * step;
+        const dstRowStart = row * w * 4;
+        for (let col = 0; col < w; col++) {
+          const si = srcRowStart + col * 3;
+          const di = dstRowStart + col * 4;
+          out[di]   = src[si+2];
+          out[di+1] = src[si+1];
+          out[di+2] = src[si];
+          out[di+3] = 255;
+        }
+      }
+    } else if (encoding === 'mono8') {
+      for (let row = 0; row < h; row++) {
+        const srcRowStart = row * step;
+        const dstRowStart = row * w * 4;
+        for (let col = 0; col < w; col++) {
+          const v = src[srcRowStart + col];
+          const di = dstRowStart + col * 4;
+          out[di] = out[di+1] = out[di+2] = v;
+          out[di+3] = 255;
+        }
+      }
+    } else {
+      console.warn('Unsupported encoding:', encoding, '(expected rgb8/bgr8/mono8).');
+      return;
+    }
+
+    ctx.putImageData(new ImageData(out, w, h), 0, 0);
+  }
+
+  // Subscribe to the raw image (omit messageType to dodge ROS1/ROS2 string mismatch)
+  const imageTopic = new ROSLIB.Topic({
+    ros,
+    name: '/cam1/camera/color/image_raw'
+  });
+
+  // Throttle to ~10 FPS
+  let lastFrameTs = 0;
+  const minFrameGapMs = 10;
+  imageTopic.subscribe(msg => {
+    const now = performance.now();
+    if (now - lastFrameTs < minFrameGapMs) return;
+    lastFrameTs = now;
+
+    try {
+      renderImage(msg);
+    } catch (e) {
+      console.error(e);
+    }
+  });
+
+
+</script>
+</body>
+</html>
